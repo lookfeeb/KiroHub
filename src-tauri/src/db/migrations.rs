@@ -7,6 +7,7 @@
 use rusqlite::Connection;
 
 /// 迁移步骤数量（= 最新 schema 版本），供初始化校验使用。
+#[allow(dead_code)]
 pub const MIGRATIONS_LEN: usize = MIGRATIONS.len();
 
 /// 迁移步骤列表：索引即目标版本（从 1 开始）。新增 schema 变更时在末尾追加。

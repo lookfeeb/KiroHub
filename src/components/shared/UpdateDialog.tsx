@@ -4,10 +4,8 @@ import { X, Download, RefreshCw, Sparkles, CheckCircle2, FileText, AlertCircle }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { Progress } from '../ui/progress'
-import { useApp } from '../../hooks/useApp'
 
 function UpdateDialog({ updateInfo, update, onClose }) {
-  const { t } = useApp()
   const [installing, setInstalling] = useState(false)
   const [downloadComplete, setDownloadComplete] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState(null)
@@ -60,7 +58,7 @@ function UpdateDialog({ updateInfo, update, onClose }) {
         }
       })
     } catch (e) {
-      setError(t('update.installFailed') + ': ' + e)
+      setError('安装失败: ' + e)
       setInstalling(false)
       setDownloadProgress(null)
     }
@@ -81,8 +79,8 @@ function UpdateDialog({ updateInfo, update, onClose }) {
   return (
     <Dialog open={true} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" showCloseButton={false}>
-        <DialogTitle className="sr-only">{t('update.newVersionAvailable')}</DialogTitle>
-        <DialogDescription className="sr-only">v{updateInfo?.version} {t('update.readyToInstall')}</DialogDescription>
+        <DialogTitle className="sr-only">发现新版本</DialogTitle>
+        <DialogDescription className="sr-only">v{updateInfo?.version} 已准备好安装</DialogDescription>
         {/* 顶部横幅 */}
         <div className="bg-gradient-to-r from-blue-500 to-indigo-600 px-6 py-5 relative">
           <div className="flex items-center gap-4">
@@ -90,9 +88,9 @@ function UpdateDialog({ updateInfo, update, onClose }) {
               <Sparkles size={28} className="text-white" />
             </div>
             <div className="flex flex-col gap-0.5">
-              <h3 className="text-xl font-bold text-white">{t('update.newVersionAvailable')}</h3>
+              <h3 className="text-xl font-bold text-white">发现新版本</h3>
               <p className="text-sm text-white/80">
-                v{updateInfo?.version} {t('update.readyToInstall')}
+                v{updateInfo?.version} 已准备好安装
               </p>
             </div>
           </div>
@@ -111,23 +109,23 @@ function UpdateDialog({ updateInfo, update, onClose }) {
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={24} className="text-emerald-500" />
-                <span className="text-lg font-medium text-emerald-600">{t('update.downloadComplete')}</span>
+                <span className="text-lg font-medium text-emerald-600">下载完成</span>
               </div>
-              <p className="text-sm text-muted-foreground">{t('update.restartToInstall')}</p>
+              <p className="text-sm text-muted-foreground">重启应用以完成安装</p>
               <div className="flex gap-2">
                 <Button onClick={onClose} variant="outline" className="flex-1">
-                  {t('update.installLater')}
+                  稍后安装
                 </Button>
                 <Button onClick={doRelaunch} className="flex-1">
                   <RefreshCw size={16} className="mr-2" />
-                  {t('update.restartNow')}
+                  立即重启
                 </Button>
               </div>
             </div>
           ) : installing && downloadProgress ? (
             <div className="flex flex-col gap-4">
               <div className="flex justify-between items-center">
-                <span className="text-sm">{t('update.downloading')}...</span>
+                <span className="text-sm">下载中...</span>
                 <span className="text-sm font-medium text-blue-600">{downloadProgress.percent}%</span>
               </div>
               <Progress value={downloadProgress.percent} className="h-2" />
@@ -139,7 +137,7 @@ function UpdateDialog({ updateInfo, update, onClose }) {
               </div>
               <div className="flex items-center gap-2">
                 <RefreshCw size={12} className="animate-spin text-blue-500" />
-                <span className="text-xs text-muted-foreground">{t('update.doNotClose')}</span>
+                <span className="text-xs text-muted-foreground">下载过程中请勿关闭应用</span>
               </div>
             </div>
           ) : (
@@ -148,7 +146,7 @@ function UpdateDialog({ updateInfo, update, onClose }) {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2">
                     <FileText size={16} />
-                    <span className="text-sm font-medium">{t('update.releaseNotes')}</span>
+                    <span className="text-sm font-medium">更新内容</span>
                   </div>
                   <div className="text-sm max-h-40 overflow-y-auto p-3 rounded-lg whitespace-pre-wrap leading-relaxed border bg-muted/50">
                     {updateInfo.body}
@@ -157,11 +155,11 @@ function UpdateDialog({ updateInfo, update, onClose }) {
               )}
               <div className="flex gap-2">
                 <Button onClick={onClose} variant="outline" className="flex-1">
-                  {t('update.later')}
+                  稍后
                 </Button>
                 <Button onClick={doUpdate} className="flex-1">
                   <Download size={16} className="mr-2" />
-                  {t('update.updateNow')}
+                  立即更新
                 </Button>
               </div>
             </div>

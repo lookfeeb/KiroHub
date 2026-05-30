@@ -128,7 +128,7 @@ fn setup_log_plugin() -> tauri_plugin_log::Builder {
         // 只显示我们自己的日志，过滤掉第三方库的日志
         .filter(|metadata| {
             let target = metadata.target();
-            target.starts_with("kiro_account_manager")
+            target.starts_with("kiro_hub")
         })
         // 紧凑格式器：HH:MM:SS LEVEL [短模块] msg
         // 默认格式 [date][time][full_target][LEVEL] msg 在终端太长不利于阅读

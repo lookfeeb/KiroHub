@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Code2, Palette, Cpu, RefreshCw } from 'lucide-react'
 import { getVersion } from '@tauri-apps/api/app'
+import { check } from '@tauri-apps/plugin-updater'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,7 +23,7 @@ const AppLogo = ({ accent }: { accent: any }) => (
 
 function About() {
   const { t, theme } = useApp()
-  const { showInfo } = useDialog()
+  const { showInfo, showUpdate } = useDialog()
   const [version, setVersion] = useState('')
   const [checking, setChecking] = useState(false)
 
@@ -41,12 +42,29 @@ function About() {
   const checkUpdate = useCallback(async () => {
     setChecking(true)
     try {
-      // 链接更新检测已移除，后续再接入
-      showInfo(t('about.checkUpdate'), t('about.upToDate'))
+      const update = await check()
+      if (update?.available) {
+        showUpdate({ version: update.version, body: update.body || '' }, update)
+      } else {
+        showInfo('检查更新', '当前已是最新版本')
+      }
+    } catch (e) {
+      showInfo('检查更新', '检查更新失败：' + e)
     } finally {
       setChecking(false)
     }
-  }, [showInfo, t])
+  }, [showUpdate, showInfo])
+
+  const showChangelog = useCallback(async () => {
+    if (!version) return
+    try {
+      const res = await fetch(`https://api.github.com/repos/lookfeeb/KiroHub/releases/tags/v${version}`)
+      const data = await res.json()
+      showInfo(`v${version} 更新内容`, data?.body || '暂无更新说明')
+    } catch {
+      showInfo(`v${version} 更新内容`, '获取更新内容失败')
+    }
+  }, [version, showInfo])
 
   return (
     <div className="h-full glass-main overflow-auto p-6">
@@ -59,7 +77,11 @@ function About() {
               <div className="flex-1 min-w-0 space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-base font-semibold text-foreground">{t('about.appName')}</h1>
-                  <Badge variant="default" className="px-2 py-0 h-5 text-[11px] font-mono">
+                  <Badge
+                    variant="default"
+                    onClick={showChangelog}
+                    className="px-2 py-0 h-5 text-[11px] font-mono cursor-pointer hover:opacity-80"
+                  >
                     v{version || '...'}
                   </Badge>
                   <Button
@@ -70,7 +92,7 @@ function About() {
                     className="ml-auto h-7 text-xs gap-1"
                   >
                     <RefreshCw size={12} className={checking ? 'animate-spin' : ''} />
-                    {checking ? t('about.checking') : t('about.checkUpdate')}
+                    {checking ? '检查中...' : '检查更新'}
                   </Button>
                 </div>
 

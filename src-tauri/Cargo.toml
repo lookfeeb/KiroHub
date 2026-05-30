@@ -1,10 +1,10 @@
 [package]
-name = "kiro-account-manager"
-version = "0.0.1"
-description = "KiroHub - 管理 Kiro IDE 账号，支持多账号切换和配额监控"
-authors = ["hj01857655"]
+name = "kiro-hub"
+version = "0.0.2"
+description = "KiroHub - 管理 Kiro IDE、Cli 账号，支持多账号切换和配额监控"
+authors = ["lookfeeb"]
 license = "CC-BY-NC-SA-4.0"
-repository = "https://github.com/hj01857655/kiro-account-manager"
+repository = "https://github.com/lookfeeb/KiroHub"
 edition = "2021"
 
 [build-dependencies]

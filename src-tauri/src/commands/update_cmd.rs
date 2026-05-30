@@ -6,13 +6,13 @@ use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
 
 const UPDATE_URL_DEFAULT: &str =
-    "https://github.com/hj01857655/kiro-account-manager/releases/latest/download/latest.json";
+    "https://github.com/lookfeeb/KiroHub/releases/latest/download/latest.json";
 #[cfg(target_os = "linux")]
 const UPDATE_URL_DEB: &str =
-    "https://github.com/hj01857655/kiro-account-manager/releases/latest/download/latest-deb.json";
+    "https://github.com/lookfeeb/KiroHub/releases/latest/download/latest-deb.json";
 #[cfg(target_os = "linux")]
 const UPDATE_URL_RPM: &str =
-    "https://github.com/hj01857655/kiro-account-manager/releases/latest/download/latest-rpm.json";
+    "https://github.com/lookfeeb/KiroHub/releases/latest/download/latest-rpm.json";
 
 /// 检测 Linux 安装方式
 #[cfg(target_os = "linux")]
