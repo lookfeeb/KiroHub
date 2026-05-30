@@ -14,7 +14,7 @@ export function DialogProvider({ children }) {
   const [updateDialog, setUpdateDialog] = useState(null)
 
   // 显示确认弹窗，返回 Promise<boolean>
-  const showConfirm = useCallback((title, message, options = {}) => {
+  const showConfirm = useCallback((title, message, options: { confirmText?: string; cancelText?: string } = {}) => {
     return new Promise((resolve) => {
       setResolveRef(() => resolve)
       setDialog({

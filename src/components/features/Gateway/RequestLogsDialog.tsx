@@ -255,7 +255,7 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
                         >
                           <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{log.timestamp}</td>
                           <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[140px]" title={log.path}>
-                            {log.outcome === 'success (cached)' ? <span className="text-blue-500">⚡</span> : null}
+                            {log.outcome === 'cached' ? <span className="text-blue-500">⚡</span> : null}
                             {log.path}
                           </td>
                           <td className="px-2 py-1.5 truncate max-w-[120px]" title={log.model}>{log.model || '-'}</td>

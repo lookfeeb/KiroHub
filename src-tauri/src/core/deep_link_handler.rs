@@ -192,7 +192,11 @@ mod tests {
     use super::{
         handle_deep_link, register_waiter, DeepLinkCallbackWaiter,
     };
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    // 这些用例共享全局 waiter 状态（注册新 waiter 会取消旧 waiter），并行会互相干扰，故串行化
+    static WAITER_TEST_GUARD: Mutex<()> = Mutex::new(());
 
     #[test]
     fn deep_link_scheme_matches_registered_tauri_scheme() {
@@ -215,6 +219,9 @@ mod tests {
 
     #[test]
     fn registering_new_waiter_cancels_previous_waiter() {
+        let _guard = WAITER_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut first = register_waiter("first-state");
         first.timeout = Duration::from_millis(20);
         let _second = register_waiter("second-state");
@@ -226,6 +233,9 @@ mod tests {
 
     #[test]
     fn handle_deep_link_keeps_waiter_when_scheme_does_not_match() {
+        let _guard = WAITER_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let waiter = register_waiter("expected-state");
 
         assert!(!handle_deep_link(

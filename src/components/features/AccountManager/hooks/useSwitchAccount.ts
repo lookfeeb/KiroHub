@@ -25,14 +25,14 @@ interface SyncResult {
   account: any
 }
 
-export function useSwitchAccount(onLocalTokenChange) {
+export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
   const { t } = useApp()
   const { settings: appSettings } = useAppSettings()
   const [switchingId, setSwitchingId] = useState(null)
   const [switchDialog, setSwitchDialog] = useState(null)
 
   // 显示切换确认弹窗
-  const handleSwitchAccount = useCallback((account) => {
+  const handleSwitchAccount = useCallback((account, initialTargets = ['ide']) => {
     if (isUnavailableStatus(account)) {
       const statusMeta = getAccountStatusMeta(account, t)
       setSwitchDialog({ type: 'error', title: t('switch.failed'), message: `账号当前状态为${statusMeta.label}，请重新登录或恢复后再切换`, account: null })
@@ -47,7 +47,7 @@ export function useSwitchAccount(onLocalTokenChange) {
       title: t('switch.title'),
       message: `${t('switch.confirmSwitch')} ${account.email}？`,
       account,
-      switchTarget: 'ide'})
+      switchTargets: initialTargets.length ? initialTargets : ['ide']})
   }, [t])
 
   // 确认切换
@@ -110,16 +110,16 @@ export function useSwitchAccount(onLocalTokenChange) {
       const settings = appSettings || {}
       refreshedAccount = await applyMachineGuid(refreshedAccount, settings)
 
-      const switchTarget = (switchDialog as any)?.switchTarget || (settings as any).switchTarget || 'ide'
+      const switchTargets: string[] = (switchDialog as any)?.switchTargets || ['ide']
 
       // IDE 切号
-      if (switchTarget === 'ide' || switchTarget === 'both') {
+      if (switchTargets.includes('ide')) {
         const params = buildSwitchParams(refreshedAccount)
         await invoke('switch_kiro_account', { params })
       }
 
       // CLI 切号
-      if (switchTarget === 'cli' || switchTarget === 'both') {
+      if (switchTargets.includes('cli')) {
         try {
           const cliPath = await invoke<string>('get_kiro_cli_default_path')
           if (cliPath) {
@@ -132,6 +132,7 @@ export function useSwitchAccount(onLocalTokenChange) {
 
       // 更新当前账号标识
       invoke('get_kiro_local_token').then(onLocalTokenChange).catch(() => onLocalTokenChange(null))
+      reloadCliToken?.()
 
       // 从 usageData 获取配额信息（API 原始响应）
       const usageData = refreshedAccount.usageData
@@ -190,7 +191,7 @@ export function useSwitchAccount(onLocalTokenChange) {
       message += `🏷️ ${t('switch.type')}: ${provider}`
       if (subTitle) message += ` (${subTitle})`
       message += `\n`
-      message += `🎯 切换目标: ${switchTarget === 'both' ? 'IDE + CLI' : switchTarget === 'cli' ? 'CLI' : 'IDE'}`
+      message += `🎯 切换目标: ${switchTargets.includes('ide') && switchTargets.includes('cli') ? 'IDE + CLI' : switchTargets.includes('cli') ? 'CLI' : 'IDE'}`
       message += `\n`
       if (overageEnabled && currentOverages > 0) {
         message += `⚡ 超额: ${currentOverages} credits ($${overageCharges.toFixed(2)}) | 费率: $${overageRate}/credit | 上限: ${overageCap}`
@@ -214,7 +215,7 @@ export function useSwitchAccount(onLocalTokenChange) {
     } finally {
       setSwitchingId(null)
     }
-  }, [switchDialog, appSettings, onLocalTokenChange, t])
+  }, [switchDialog, appSettings, onLocalTokenChange, reloadCliToken, t])
 
   // 关闭弹窗
   const closeSwitchDialog = useCallback(() => setSwitchDialog(null), [])

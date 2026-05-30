@@ -30,6 +30,10 @@ export interface AppSettings {
   telemetryUsageAnalytics: boolean;
   telemetryEditStats: boolean;
   telemetryFeedback: boolean;
+  cliLaunchModel: string;
+  cliLaunchTrustAllTools: boolean;
+  cliLaunchAgent: string;
+  cliLaunchExtraArgs: string;
 }
 
 interface AppSettingsContextValue {
@@ -69,7 +73,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   telemetryContentCollection: false,
   telemetryUsageAnalytics: false,
   telemetryEditStats: false,
-  telemetryFeedback: false
+  telemetryFeedback: false,
+  cliLaunchModel: 'claude-sonnet-4.5',
+  cliLaunchTrustAllTools: false,
+  cliLaunchAgent: '',
+  cliLaunchExtraArgs: ''
 }
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {

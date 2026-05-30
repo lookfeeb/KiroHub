@@ -73,6 +73,13 @@ test('buildGatewayConnectHost maps wildcard binds to a usable client host', () =
   assert.equal(buildGatewayConnectHost('::', false), 'localhost')
 })
 
+test('buildGatewayConnectHost falls back to loopback for empty host and passes through explicit binds', () => {
+  assert.equal(buildGatewayConnectHost('', true), '127.0.0.1')
+  assert.equal(buildGatewayConnectHost('   ', false), '127.0.0.1')
+  assert.equal(buildGatewayConnectHost('192.168.1.20', false), '192.168.1.20')
+  assert.equal(buildGatewayConnectHost('::1', true), '::1')
+})
+
 test('buildGatewayBaseUrl brackets ipv6 addresses for clients', () => {
   assert.equal(buildGatewayBaseUrl('::1', 8765, true), 'http://[::1]:8765')
   assert.equal(buildGatewayBaseUrl('0.0.0.0', 8765, false), 'http://localhost:8765')

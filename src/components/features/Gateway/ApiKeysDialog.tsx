@@ -44,19 +44,21 @@ function ApiKeysDialog({ open, onOpenChange, clientApiKeysText, setConfig, onSav
 
   const generateKey = () => {
     const random = crypto?.randomUUID?.().replace(/-/g, '') || `${Date.now()}${Math.random().toString(36).slice(2)}`
-    const newKey = `sk-${random}`
+    const key = `sk-${random}`
+    const entry = `key-${random.slice(0, 4)}:${key}`
     setConfig((prev: any) => ({
       ...prev,
-      clientApiKeysText: prev.clientApiKeysText ? `${prev.clientApiKeysText}\n${newKey}` : newKey,
-      apiKey: newKey
+      clientApiKeysText: prev.clientApiKeysText ? `${prev.clientApiKeysText}\n${entry}` : entry,
+      apiKey: key
     }))
   }
 
   const addKey = () => {
-    const newKey = `sk-${Date.now()}`
+    const stamp = `${Date.now()}`
+    const entry = `key-${stamp.slice(-4)}:sk-${stamp}`
     setConfig((prev: any) => ({
       ...prev,
-      clientApiKeysText: prev.clientApiKeysText ? `${prev.clientApiKeysText}\n${newKey}` : newKey
+      clientApiKeysText: prev.clientApiKeysText ? `${prev.clientApiKeysText}\n${entry}` : entry
     }))
   }
 

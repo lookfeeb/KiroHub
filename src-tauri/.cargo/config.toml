@@ -1,4 +1,6 @@
 [build]
+# 编译产物/缓存输出到项目根目录的 target（而非 src-tauri/target）
+target-dir = "../target"
 # 增量编译（开发时加速）
 incremental = true
 # pipelined 编译（Rust 1.90+ 稳定特性，减少等待时间）

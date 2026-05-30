@@ -34,6 +34,8 @@ pub struct SessionSummary {
     pub created_at: Option<i64>,
     #[serde(rename = "modifiedAt")]
     pub modified_at: Option<i64>,
+    /// 来源：ide | cli
+    pub source: String,
 }
 
 /// 对话历史项

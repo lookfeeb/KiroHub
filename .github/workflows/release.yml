@@ -9,80 +9,33 @@ jobs:
   release:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-2022
-            target: ''
-          - platform: windows-2022
-            target: 'aarch64-pc-windows-msvc'
-          - platform: macos-15-intel
-            target: 'x86_64-apple-darwin'
-          - platform: macos-latest
-            target: 'aarch64-apple-darwin'
-          - platform: ubuntu-22.04
-            target: ''
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0  # 获取完整 git 历史，用于生成 Release Notes
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm libfuse2
-
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5
-        with:
-          bun-version: latest
-
       - name: Rust cache
-        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        uses: swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           workspaces: src-tauri
-          # 即使构建失败也保存缓存
           cache-on-failure: true
-          # 为不同平台使用不同的缓存 key
-          key: ${{ matrix.platform }}-${{ matrix.target || 'default' }}
-          # 跨 job 共享缓存（加快首次构建）
-          shared-key: "release"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: 1.95.0
-          targets: ${{ matrix.target }}
-
-      # - name: Setup sccache
-      #   uses: mozilla-actions/sccache-action@2e7f9ec7921547d4b46598398ca573513895d0bd
-      #   with:
-      #     version: "v0.8.1"
-
-      # - name: Configure sccache
-      #   shell: bash
-      #   run: |
-      #     echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-      #     echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-
-      - name: Install macOS dependencies
-        if: startsWith(matrix.platform, 'macos')
-        run: brew install create-dmg
 
       - name: Install dependencies
         shell: bash
-        run: bun install
+        run: npm install
 
       - name: Generate Release Notes
         id: release_notes
@@ -91,11 +44,11 @@ jobs:
           # 获取上一个 tag
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           CURRENT_TAG=${{ github.ref_name }}
-          
+
           # 生成更新日志
           echo "## 🎉 更新内容" > release_notes.md
           echo "" >> release_notes.md
-          
+
           if [ -n "$PREVIOUS_TAG" ]; then
             # 获取两个 tag 之间的 commits，过滤掉 docs/ci/chore/style/test 等内部开发相关的 commit
             git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s" --no-merges | \
@@ -113,13 +66,13 @@ jobs:
               grep -v "^- style:" | \
               grep -v "^- test:" >> release_notes.md
           fi
-          
+
           echo "" >> release_notes.md
           echo "" >> release_notes.md
           echo "---" >> release_notes.md
           echo "" >> release_notes.md
           echo "📥 **下载地址**：[GitHub Releases](https://github.com/${{ github.repository }}/releases/tag/${CURRENT_TAG})" >> release_notes.md
-          
+
           # 输出到环境变量
           cat release_notes.md
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
@@ -132,52 +85,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Linux AppImage 使用 gzip 压缩，兼容旧版 AppImageLauncher
-          APPIMAGETOOL_COMP: ${{ matrix.platform == 'ubuntu-22.04' && 'gzip' || '' }}
         with:
           tagName: v__VERSION__
-          releaseName: 'Kiro Account Manager v__VERSION__'
+          releaseName: 'KiroHub v__VERSION__'
           releaseBody: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
-
-  # 生成 deb/rpm 专用的更新 JSON
-  generate-linux-json:
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download latest.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=${{ github.ref_name }}
-          gh release download "$VERSION" -p "latest.json" -R ${{ github.repository }} -O latest.json
-          cat latest.json
-
-      - name: Generate latest-deb.json
-        run: |
-          VERSION=${{ github.ref_name }}
-          VERSION_NUM=${VERSION#v}
-          jq --arg ver "$VERSION" --arg verNum "$VERSION_NUM" '
-            .platforms["linux-x86_64"].url = "https://github.com/${{ github.repository }}/releases/download/\($ver)/Kiro.Account.Manager_\($verNum)_amd64.deb"
-          ' latest.json > latest-deb.json
-          cat latest-deb.json
-
-      - name: Generate latest-rpm.json
-        run: |
-          VERSION=${{ github.ref_name }}
-          VERSION_NUM=${VERSION#v}
-          jq --arg ver "$VERSION" --arg verNum "$VERSION_NUM" '
-            .platforms["linux-x86_64"].url = "https://github.com/${{ github.repository }}/releases/download/\($ver)/Kiro.Account.Manager-\($verNum)-1.x86_64.rpm"
-          ' latest.json > latest-rpm.json
-          cat latest-rpm.json
-
-      - name: Upload JSON files to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=${{ github.ref_name }}
-          gh release upload "$VERSION" latest-deb.json latest-rpm.json --clobber -R ${{ github.repository }}

@@ -45,7 +45,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('accountViewMode') || 'card')
+  const [viewMode] = useState('card')
   const [tagDefinitions, setTagDefinitions] = useState<any[]>([])
   const [groupDefinitions, setGroupDefinitions] = useState<any[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
@@ -62,9 +62,19 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   const [refreshingTokenId, setRefreshingTokenId] = useState<string | null>(null)
   const [togglingOverageId, setTogglingOverageId] = useState<string | null>(null)
 
-  // 当前登录的本地 token
+  // 当前登录的本地 token（IDE）
   const [localToken, setLocalToken] = useState<any>(null)
-  
+  // 当前 CLI 登录账号的 id
+  const [cliToken, setCliToken] = useState<string | null>(null)
+
+  // 读取 CLI 当前账号标识
+  const loadCliToken = useCallback(async () => {
+    try {
+      const id = await invoke<string | null>('get_current_cli_account_id')
+      setCliToken(id || null)
+    } catch { setCliToken(null) }
+  }, [])
+
   // 用于管理复制提示的timer
   const copiedTimerRef = useRef<NodeJS.Timeout | null>(null)
   
@@ -75,11 +85,20 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     setSwitchDialog,
     handleSwitchAccount,
     confirmSwitch,
-    closeSwitchDialog} = useSwitchAccount(setLocalToken)
+    closeSwitchDialog} = useSwitchAccount(setLocalToken, loadCliToken)
+
+  // 点击切换时按当前 IDE/CLI 登录态预勾选目标
+  const handleSwitchWithTargets = useCallback((account: any) => {
+    const targets: string[] = []
+    if (localToken?.refreshToken && account.refreshToken === localToken.refreshToken) targets.push('ide')
+    if (cliToken && account.id === cliToken) targets.push('cli')
+    handleSwitchAccount(account, targets.length ? targets : ['ide'])
+  }, [localToken, cliToken, handleSwitchAccount])
   
   useEffect(() => {
     invoke<any>('get_kiro_local_token').then(setLocalToken).catch(() => setLocalToken(null))
-  }, [])
+    loadCliToken()
+  }, [loadCliToken])
 
   // 加载标签定义
   const loadTagDefinitions = useCallback(() => {
@@ -245,6 +264,42 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     }
   }, [clearAvailableModelsState, patchAccountLocally])
 
+  // 合并刷新：并行刷新配额与 Token，只弹一个提示
+  const handleRefreshAll = useCallback(async (id: string) => {
+    setRefreshingTokenId(id)
+    try {
+      const [quotaRes, tokenRes] = await Promise.allSettled([
+        handleRefreshStatus(id),
+        invoke<any>('refresh_account_token', { id }),
+      ])
+      // 仅合并 token 相关字段，保留 sync_account 刚拉取的最新 usageData/status，
+      // 避免 refresh_account_token 的旧快照覆盖刚刷新的配额数据
+      if (tokenRes.status === 'fulfilled' && tokenRes.value?.id) {
+        const tok = normalizeAccountForUi(tokenRes.value)
+        setAccounts(prev => prev.map(a => a.id === tok.id
+          ? { ...tok, usageData: a.usageData ?? tok.usageData, status: a.status }
+          : a))
+      }
+      clearAvailableModelsState(id)
+
+      const quotaOk = quotaRes.status === 'fulfilled' && (quotaRes.value as any)?.success
+      const tokenOk = tokenRes.status === 'fulfilled'
+      if (quotaOk || tokenOk) {
+        showSuccess(t('accounts.refreshSuccess'))
+        return
+      }
+      const errMsg = tokenRes.status === 'rejected'
+        ? String((tokenRes as PromiseRejectedResult).reason)
+        : String((quotaRes.status === 'fulfilled' ? (quotaRes.value as any)?.error : '') || '')
+      if (errMsg.includes('BANNED')) showError(t('accounts.accountBanned'))
+      else if (errMsg.includes('AUTH_ERROR')) { /* 静默 */ }
+      else if (errMsg.includes('401') || errMsg.includes('invalid')) showError(t('accounts.tokenInvalid'))
+      else if (errMsg) showError(errMsg.slice(0, 100))
+    } finally {
+      setRefreshingTokenId(null)
+    }
+  }, [handleRefreshStatus, patchAccountLocally, clearAvailableModelsState, t])
+
   // 获取所有标签（从标签定义中获取）
   const allTags = useMemo(() => {
     // 收集账号中使用的标签 ID（从 tagLinks 中提取）
@@ -344,6 +399,10 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     const sorted = [...result].sort((a, b) => {
       const accountA = a.account
       const accountB = b.account
+      // 禁用账号永远排在最后，正常账号在前
+      const enabledA = accountA.enabled !== false
+      const enabledB = accountB.enabled !== false
+      if (enabledA !== enabledB) return enabledA ? -1 : 1
       switch (sortBy) {
         case 'usageAsc':
           return getUsagePercent(accountA) - getUsagePercent(accountB)
@@ -387,10 +446,6 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   const handleGroupFilter = useCallback((group: string | null) => { setSelectedGroup(group) }, [])
   const handleTagFilter = useCallback((tag: string | null) => { setSelectedTag(tag) }, [])
   const handleStatusFilter = useCallback((status: string | null) => { setSelectedStatus(status) }, [])
-  const handleViewModeChange = useCallback((mode: string) => {
-    setViewMode(mode)
-    localStorage.setItem('accountViewMode', mode)
-  }, [])
   const handleSelectAll = useCallback((checked: boolean) => {
     setSelectedIds(checked ? filteredAccounts.map(a => a.id) : [])
   }, [filteredAccounts])
@@ -544,7 +599,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
           await handleExport(selectedIds)
           setSelectedIds([]) // 清除选中状态
         }}
-        onRefresh={loadAccounts}
+        onRefresh={() => loadAccounts(true)}
         onRefreshAll={async () => {
           if (selectedIds.length === 0) {
             showError(t('accounts.refreshSelectFirst') || '请先选择要刷新的账号')
@@ -566,7 +621,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
         sortBy={sortBy}
         onSortChange={setSortBy}
         viewMode={viewMode}
-        onViewModeChange={handleViewModeChange}
+        onViewModeChange={() => {}}
         advancedFilters={advancedFilters}
         onAdvancedFiltersChange={setAdvancedFilters}
         totalCount={filteredAccounts.length}
@@ -612,9 +667,10 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
           onSelectOne={handleSelectOne}
           copiedId={copiedId}
           onCopy={handleCopy}
-          onSwitch={handleSwitchAccount}
+          onSwitch={handleSwitchWithTargets}
           onRefresh={handleRefreshWithNotify}
           onRefreshToken={handleRefreshToken}
+          onRefreshAll={handleRefreshAll}
           onEdit={setEditingAccount}
           onEditLabel={setEditingLabelAccount}
           onToggleEnabled={handleToggleEnabled}
@@ -623,6 +679,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
           onDeleteRemote={handleDeleteRemote}
           onAdd={() => setShowImportModal(true)}
           localToken={localToken}
+          cliToken={cliToken}
           tagDefinitions={tagDefinitions}
           groupDefinitions={groupDefinitions}
           accountRowStateById={accountRowStateById}
@@ -637,7 +694,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
           onSelectAll={handleSelectAll}
           onSelectOne={handleSelectOne}
           onCopy={handleCopy}
-          onSwitch={handleSwitchAccount}
+          onSwitch={handleSwitchWithTargets}
           onRefresh={handleRefreshWithNotify}
           onRefreshToken={handleRefreshToken}
           onEdit={setEditingAccount}
@@ -740,19 +797,26 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
             <div className="flex items-center gap-3 mt-3 p-3 rounded-xl bg-muted/30 border border-border">
               <span className="text-xs text-muted-foreground font-medium shrink-0">切换目标</span>
               <div className="flex gap-1.5 flex-1">
-                {(['ide', 'cli', 'both'] as const).map(target => (
-                  <button
-                    key={target}
-                    onClick={() => setSwitchDialog({ ...switchDialog, switchTarget: target })}
-                    className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
-                      (switchDialog as any).switchTarget === target
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    {target === 'ide' ? '🖥 IDE' : target === 'cli' ? '⌨ CLI' : '🔗 Both'}
-                  </button>
-                ))}
+                {(['ide', 'cli'] as const).map(target => {
+                  const targets: string[] = (switchDialog as any).switchTargets || []
+                  const active = targets.includes(target)
+                  return (
+                    <button
+                      key={target}
+                      onClick={() => {
+                        const next = active ? targets.filter(x => x !== target) : [...targets, target]
+                        setSwitchDialog({ ...switchDialog, switchTargets: next })
+                      }}
+                      className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                        active
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      {active ? '✓ ' : ''}{target === 'ide' ? '🖥 IDE' : '⌨ CLI'}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           ) : null}

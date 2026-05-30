@@ -1,10 +1,24 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs;
 use anyhow::{Result, Context};
-use crate::models::ide_session::{IdeSession, SessionSummary};
+use crate::models::ide_session::{IdeSession, SessionSummary, HistoryItem, Message, ContentItem};
 
 // 安全限制
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+
+/// CLI 会话工作区标识前缀：`cli:<cwd>`（按工作目录分组）
+const CLI_PREFIX: &str = "cli:";
+
+/// kiro-cli 会话元数据（~/.kiro/sessions/cli/<id>.json）
+#[derive(Default, serde::Deserialize)]
+struct CliSessionMeta {
+    #[serde(default)] session_id: String,
+    #[serde(default)] cwd: Option<String>,
+    #[serde(default)] title: Option<String>,
+    #[serde(default)] created_at: Option<String>,
+    #[serde(default)] updated_at: Option<String>,
+    #[serde(default)] session_created_reason: Option<String>,
+}
 
 pub struct SessionStorage {
     base_path: PathBuf,
@@ -94,12 +108,26 @@ impl SessionStorage {
         
         // 只返回名称
         workspaces = workspace_with_time.into_iter().map(|(name, _)| name).collect();
-        
+
+        // CLI 会话按工作目录(cwd)分组为多个工作区，置顶
+        let mut cli_ws: Vec<String> = Vec::new();
+        for s in self.collect_cli_sessions(None) {
+            let id = format!("{CLI_PREFIX}{}", s.workspace_directory);
+            if !cli_ws.contains(&id) {
+                cli_ws.push(id);
+            }
+        }
+        cli_ws.extend(workspaces);
+        workspaces = cli_ws;
+
         Ok(workspaces)
     }
     
     /// 列出指定 workspace 的所有 sessions
     pub fn list_sessions(&self, workspace_hash: &str) -> Result<Vec<SessionSummary>> {
+        if let Some(cwd) = workspace_hash.strip_prefix(CLI_PREFIX) {
+            return Ok(self.collect_cli_sessions(Some(cwd)));
+        }
         // 安全检查：防止路径遍历攻击
         if !Self::is_safe_path_component(workspace_hash) {
             log::warn!("[安全] 检测到非法的 workspace_hash: {}", workspace_hash);
@@ -184,11 +212,36 @@ impl SessionStorage {
             modified_at: metadata.modified().ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64),
+            source: "ide".to_string(),
         })
     }
     
+    /// 返回 session 文件在磁盘上的真实完整路径
+    pub fn get_session_file_path(&self, workspace_hash: &str, session_id: &str) -> Result<String> {
+        if !Self::is_safe_path_component(session_id) {
+            return Err(anyhow::anyhow!("Invalid session id"));
+        }
+        // CLI 会话：~/.kiro/sessions/cli/<id>.jsonl
+        if workspace_hash.starts_with(CLI_PREFIX) {
+            let dir = Self::cli_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
+            return Ok(dir.join(format!("{session_id}.jsonl")).to_string_lossy().to_string());
+        }
+        // IDE 会话：<base>/<workspace_hash>/<id>.json
+        if !Self::is_safe_path_component(workspace_hash) {
+            return Err(anyhow::anyhow!("Invalid workspace hash"));
+        }
+        Ok(self.base_path
+            .join(workspace_hash)
+            .join(format!("{session_id}.json"))
+            .to_string_lossy()
+            .to_string())
+    }
+
     /// 加载完整 session
     pub fn load_session(&self, workspace_hash: &str, session_id: &str) -> Result<IdeSession> {
+        if workspace_hash.starts_with(CLI_PREFIX) {
+            return self.load_cli_session(session_id);
+        }
         // 安全检查：防止路径遍历攻击
         if !Self::is_safe_path_component(workspace_hash) || !Self::is_safe_path_component(session_id) {
             log::warn!("[安全] 检测到非法的路径参数: workspace_hash={}, session_id={}", workspace_hash, session_id);
@@ -215,6 +268,9 @@ impl SessionStorage {
     
     /// 删除 session
     pub fn delete_session(&self, workspace_hash: &str, session_id: &str) -> Result<()> {
+        if workspace_hash.starts_with(CLI_PREFIX) {
+            return self.delete_cli_session(session_id);
+        }
         // 安全检查：防止路径遍历攻击
         if !Self::is_safe_path_component(workspace_hash) || !Self::is_safe_path_component(session_id) {
             log::warn!("[安全] 检测到非法的路径参数: workspace_hash={}, session_id={}", workspace_hash, session_id);
@@ -233,6 +289,9 @@ impl SessionStorage {
     
     /// 删除整个工作区目录
     pub fn delete_workspace(&self, workspace_hash: &str) -> Result<()> {
+        if let Some(cwd) = workspace_hash.strip_prefix(CLI_PREFIX) {
+            return self.delete_cli_workspace(cwd);
+        }
         // 安全检查：防止路径遍历攻击
         if !Self::is_safe_path_component(workspace_hash) {
             log::warn!("[安全] 检测到非法的 workspace_hash: {}", workspace_hash);
@@ -293,6 +352,199 @@ impl SessionStorage {
         }
         
         md
+    }
+
+    // ===== Kiro CLI 会话来源（~/.kiro/sessions/cli/）=====
+
+    fn cli_dir() -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".kiro").join("sessions").join("cli"))
+    }
+
+    fn parse_iso_secs(s: &Option<String>) -> Option<i64> {
+        s.as_ref()
+            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .map(|dt| dt.timestamp())
+    }
+
+    /// 统计 jsonl 中的消息数（Prompt + AssistantMessage）与文件大小
+    fn cli_jsonl_stats(jsonl: &Path) -> (usize, u64) {
+        let size = fs::metadata(jsonl).map(|m| m.len()).unwrap_or(0);
+        if size == 0 || size > MAX_FILE_SIZE {
+            return (0, size);
+        }
+        let count = fs::read_to_string(jsonl)
+            .map(|c| c.lines().filter(|l| {
+                serde_json::from_str::<serde_json::Value>(l)
+                    .ok()
+                    .and_then(|v| v.get("kind").and_then(|k| k.as_str())
+                        .map(|k| k == "Prompt" || k == "AssistantMessage"))
+                    .unwrap_or(false)
+            }).count())
+            .unwrap_or(0);
+        (count, size)
+    }
+
+    /// 收集 CLI 会话（仅含真实对话的）；filter_cwd 为 Some 时只返回该工作目录下的会话
+    fn collect_cli_sessions(&self, filter_cwd: Option<&str>) -> Vec<SessionSummary> {
+        let dir = match Self::cli_dir() {
+            Some(d) if d.is_dir() => d,
+            _ => return Vec::new(),
+        };
+        let read = match fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let mut sessions = Vec::new();
+        for entry in read.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else { continue };
+            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else { continue };
+            if meta.session_id.is_empty() {
+                continue;
+            }
+            let cwd = meta.cwd.clone().unwrap_or_default();
+            if let Some(f) = filter_cwd {
+                if cwd != f {
+                    continue;
+                }
+            }
+            let (msg_count, file_size) = Self::cli_jsonl_stats(&path.with_extension("jsonl"));
+            // 仅展示有真实对话（含 Prompt/AssistantMessage）的会话，跳过纯元数据会话
+            if msg_count == 0 {
+                continue;
+            }
+            let file_mtime = entry.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+            let title = meta.title.filter(|t| !t.is_empty()).unwrap_or_else(|| meta.session_id.clone());
+            sessions.push(SessionSummary {
+                title,
+                session_type: meta.session_created_reason.unwrap_or_else(|| "cli".to_string()),
+                workspace_hash: format!("{CLI_PREFIX}{cwd}"),
+                workspace_directory: cwd,
+                message_count: msg_count,
+                file_size,
+                created_at: Self::parse_iso_secs(&meta.created_at),
+                modified_at: Self::parse_iso_secs(&meta.updated_at).or(file_mtime),
+                source: "cli".to_string(),
+                session_id: meta.session_id,
+            });
+        }
+        sessions.sort_by(|a, b| b.modified_at.unwrap_or(0).cmp(&a.modified_at.unwrap_or(0)));
+        sessions
+    }
+
+    fn load_cli_session(&self, session_id: &str) -> Result<IdeSession> {
+        if !Self::is_safe_path_component(session_id) {
+            return Err(anyhow::anyhow!("Invalid session id"));
+        }
+        let dir = Self::cli_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
+        let meta: CliSessionMeta = fs::read_to_string(dir.join(format!("{session_id}.json")))
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_default();
+
+        let jsonl_path = dir.join(format!("{session_id}.jsonl"));
+        let mut history = Vec::new();
+        if jsonl_path.exists() {
+            let size = fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0);
+            if size > MAX_FILE_SIZE {
+                return Err(anyhow::anyhow!("Session file too large: {} bytes", size));
+            }
+            let content = fs::read_to_string(&jsonl_path)
+                .context("Failed to read kiro-cli session transcript")?;
+            for (i, line) in content.lines().enumerate() {
+                if let Some(item) = Self::cli_line_to_history(line, i) {
+                    history.push(item);
+                }
+            }
+        }
+
+        Ok(IdeSession {
+            title: meta.title.filter(|t| !t.is_empty()).unwrap_or_else(|| session_id.to_string()),
+            session_type: meta.session_created_reason.unwrap_or_else(|| "cli".to_string()),
+            workspace_directory: meta.cwd.unwrap_or_default(),
+            history,
+            conversation_summary: None,
+            session_id: session_id.to_string(),
+        })
+    }
+
+    /// 把一行 jsonl 转成 HistoryItem；非对话行（ToolResults 等）返回 None
+    fn cli_line_to_history(line: &str, idx: usize) -> Option<HistoryItem> {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        let role = match v.get("kind")?.as_str()? {
+            "Prompt" => "user",
+            "AssistantMessage" => "assistant",
+            _ => return None,
+        };
+        let data = v.get("data")?;
+        let id = data.get("message_id").and_then(|x| x.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("cli-{idx}"));
+        let mut items = Vec::new();
+        if let Some(arr) = data.get("content").and_then(|c| c.as_array()) {
+            for c in arr {
+                let text = match c.get("kind").and_then(|x| x.as_str()).unwrap_or("") {
+                    "text" => c.get("data").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    "toolUse" => format!(
+                        "🔧 调用工具: {}",
+                        c.get("data").and_then(|d| d.get("name")).and_then(|x| x.as_str()).unwrap_or("?")
+                    ),
+                    _ => String::new(),
+                };
+                if !text.is_empty() {
+                    items.push(ContentItem { content_type: "text".to_string(), text });
+                }
+            }
+        }
+        if items.is_empty() {
+            return None;
+        }
+        Some(HistoryItem {
+            message: Message { role: role.to_string(), content: items, is_hidden: false, id },
+            context_items: Vec::new(),
+            editor_state: serde_json::Value::Null,
+            prompt_logs: Vec::new(),
+        })
+    }
+
+    fn delete_cli_session(&self, session_id: &str) -> Result<()> {
+        if !Self::is_safe_path_component(session_id) {
+            return Err(anyhow::anyhow!("Invalid session id"));
+        }
+        let dir = Self::cli_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
+        for ext in ["json", "jsonl", "history", "lock"] {
+            let p = dir.join(format!("{session_id}.{ext}"));
+            if p.exists() {
+                let _ = fs::remove_file(&p);
+            }
+        }
+        Ok(())
+    }
+
+    /// 删除某工作目录(cwd)下的所有 CLI 会话
+    fn delete_cli_workspace(&self, cwd: &str) -> Result<()> {
+        let dir = match Self::cli_dir() {
+            Some(d) if d.is_dir() => d,
+            _ => return Ok(()),
+        };
+        for entry in fs::read_dir(&dir)?.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else { continue };
+            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else { continue };
+            if meta.cwd.as_deref().unwrap_or_default() == cwd && !meta.session_id.is_empty() {
+                let _ = self.delete_cli_session(&meta.session_id);
+            }
+        }
+        Ok(())
     }
 }
 

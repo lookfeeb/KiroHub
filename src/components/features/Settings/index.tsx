@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
-import { Palette, Settings as SettingsIcon, LayoutDashboard, Cpu, Bell } from 'lucide-react'
+import { Settings as SettingsIcon, LayoutDashboard, Bell, Info, Terminal } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
@@ -9,19 +9,21 @@ import { useAppSettings } from '../../../contexts/AppSettingsContext'
 import { usePrivacy } from '../../../contexts/PrivacyContext'
 import { persistAppSettings, runKiroCommandWithAppSettings, makeAppBoolToggle, makeKiroBoolToggle } from './settingsActions'
 import { isValidBrowserPath, isValidProxy } from './settingsValidators'
-import SettingsAppearance from './SettingsAppearance'
 import SettingsGeneral from './SettingsGeneral'
-import SettingsKiro from './SettingsKiro'
+import SettingsCliLaunch from './SettingsCliLaunch'
 import SettingsNotifications from './SettingsNotifications'
+import About from '../About'
 
 function Settings() {
-    const { t, theme, setTheme } = useApp()
+    const { t } = useApp()
     const { showConfirm, showError, showSuccess } = useDialog()
     const { updateSettings: updateAppSettings } = useAppSettings()
     const { privacyMode, setPrivacyMode } = usePrivacy()
     const [activeTab, setActiveTab] = useState('general')
 
     const [aiModel, setAiModel] = useState('claude-sonnet-4.5')
+    const [cliLaunchModel, setCliLaunchModel] = useState('claude-sonnet-4.5')
+    const [cliLaunchTrustAllTools, setCliLaunchTrustAllTools] = useState(false)
     const [lockModel, setLockModel] = useState(false)
     const [autoRefresh, setAutoRefresh] = useState(true)
     const [autoRefreshInterval, setAutoRefreshInterval] = useState(50) // 分钟
@@ -124,6 +126,9 @@ function Settings() {
                 setAutoSwitchInterval(appSettings.autoSwitchInterval ?? 5)
                 // 关闭窗口行为
                 setCloseToTray(appSettings.closeToTray ?? false)
+                // CLI 启动配置
+                setCliLaunchModel(appSettings.cliLaunchModel ?? 'claude-sonnet-4.5')
+                setCliLaunchTrustAllTools(appSettings.cliLaunchTrustAllTools ?? false)
             }
         } catch (err) {
             console.error('Failed to load settings:', err)
@@ -403,17 +408,17 @@ function Settings() {
                             <LayoutDashboard size={14} />
                             {t('settings.general')}
                         </TabsTrigger>
-                        <TabsTrigger value="appearance" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
-                            <Palette size={14} />
-                            {t('settings.appearance')}
-                        </TabsTrigger>
-                        <TabsTrigger value="kiro" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
-                            <Cpu size={14} />
-                            {t('settings.kiro')}
+                        <TabsTrigger value="cli" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                            <Terminal size={14} />
+                            {t('settings.cliLaunch')}
                         </TabsTrigger>
                         <TabsTrigger value="notifications" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
                             <Bell size={14} />
                             {t('settings.notifications')}
+                        </TabsTrigger>
+                        <TabsTrigger value="about" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                            <Info size={14} />
+                            {t('nav.about')}
                         </TabsTrigger>
                     </TabsList>
 
@@ -458,55 +463,25 @@ function Settings() {
                         />
                     </TabsContent>
 
-                    <TabsContent value="appearance">
-                        <SettingsAppearance
-                            theme={theme}
-                            setTheme={setTheme}
-                            t={t}
-                        />
-                    </TabsContent>
-
-                    <TabsContent value="kiro">
-                        <SettingsKiro
-                            aiModel={aiModel}
-                            lockModel={lockModel}
-                            agentAutonomy={agentAutonomy}
-                            trustedCommandsMode={trustedCommandsMode}
-                            customTrustedCommands={customTrustedCommands}
-                            trustedTools={trustedTools}
-                            setTrustedTools={setTrustedTools}
-                            configureMcp={configureMcp}
-                            httpProxy={httpProxy}
-                            setHttpProxy={setHttpProxy}
-                            originalProxy={originalProxy}
-                            savingProxy={savingProxy}
-                            detectingProxy={detectingProxy}
-                            savingModel={savingModel}
-                            enableCodebaseIndexing={enableCodebaseIndexing}
-                            enableTabAutocomplete={enableTabAutocomplete}
-                            usageSummary={usageSummary}
-                            enableDebugLogs={enableDebugLogs}
-                            referenceTracker={referenceTracker}
-                            handleApplyModel={handleApplyModel}
-                            handleLockModelChange={handleLockModelChange}
-                            handleAgentAutonomyChange={handleAgentAutonomyChange}
-                            handleTrustedCommandsModeChange={handleTrustedCommandsModeChange}
-                            handleCustomTrustedCommandsChange={handleCustomTrustedCommandsChange}
-                            handleTrustedToolsSave={handleTrustedToolsSave}
-                            handleConfigureMcpChange={handleConfigureMcpChange}
-                            handleApplyProxy={handleApplyProxy}
-                            handleDetectProxy={handleDetectProxy}
-                            handleCodebaseIndexingChange={handleCodebaseIndexingChange}
-                            handleTabAutocompleteChange={handleTabAutocompleteChange}
-                            handleUsageSummaryChange={handleUsageSummaryChange}
-                            handleDebugLogsChange={handleDebugLogsChange}
-                            handleReferenceTrackerChange={handleReferenceTrackerChange}
+                    <TabsContent value="cli">
+                        <SettingsCliLaunch
+                            model={cliLaunchModel}
+                            trustAllTools={cliLaunchTrustAllTools}
+                            onChange={(u: any) => {
+                                if ('cliLaunchModel' in u) setCliLaunchModel(u.cliLaunchModel)
+                                if ('cliLaunchTrustAllTools' in u) setCliLaunchTrustAllTools(u.cliLaunchTrustAllTools)
+                                saveAppSettings(u)
+                            }}
                             t={t}
                         />
                     </TabsContent>
 
                     <TabsContent value="notifications">
                         <SettingsNotifications />
+                    </TabsContent>
+
+                    <TabsContent value="about">
+                        <About />
                     </TabsContent>
                 </Tabs>
             </div>

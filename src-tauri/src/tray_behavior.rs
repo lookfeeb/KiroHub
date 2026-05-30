@@ -79,7 +79,7 @@ pub fn create_tray_icon<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIco
 
     let builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
         .menu(&menu)
-        .tooltip("Kiro Account Manager")
+        .tooltip("KiroHub")
         .show_menu_on_left_click(false)
         .on_menu_event(handle_tray_menu_event)
         .on_tray_icon_event(handle_tray_icon_event);

@@ -84,74 +84,6 @@
   --bg-glow-opacity: 0.15;
 }
 
-[data-theme='dark'] {
-  --background: #020617;
-  --foreground: #f8fafc;
-  --card: #0f172a;
-  --card-foreground: #f8fafc;
-  --popover: #0f172a;
-  --popover-foreground: #f8fafc;
-  --primary: #3b82f6;
-  --primary-foreground: #f8fafc;
-  --secondary: #1e293b;
-  --secondary-foreground: #f8fafc;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #1e293b;
-  --accent-foreground: #f8fafc;
-  --destructive: #ef4444;
-  --destructive-foreground: #f8fafc;
-  --border: #1e293b;
-  --input: #1e293b;
-  --ring: #3b82f6;
-
-  --app-primary-rgb: 59 130 246;
-  --surface-rgb: 15 23 42;
-  --surface-contrast-rgb: 2 6 23;
-  --glass-opacity: 0.72;
-}
-
-/* ============================================================
-   DARK MODE SHARED BASE
-   ============================================================ */
-[data-theme='dark'], 
-[data-theme='dark-one'], 
-[data-theme='tech'],
-[data-theme='midnight'] {
-  color-scheme: dark;
-  --foreground: #ffffff !important;
-  --card-foreground: #ffffff !important;
-  --popover-foreground: #ffffff !important;
-  --secondary-foreground: #ffffff !important;
-  --accent-foreground: #ffffff !important;
-  --muted-foreground: #cbd5e1 !important;
-  --input: rgba(255, 255, 255, 0.15) !important;
-  --ring: rgba(255, 255, 255, 0.35) !important;
-  --secondary: rgb(var(--surface-rgb) / 0.82) !important;
-  --muted: rgb(var(--primary-rgb) / 0.1) !important;
-  --accent: rgb(var(--primary-rgb) / 0.12) !important;
-  --glass-border: rgba(255, 255, 255, 0.08) !important;
-  --bg-glow-opacity: 0.12;
-}
-
-/* ============================================================
-   SPECIFIC THEME DEFINITIONS
-   ============================================================ */
-[data-theme='dark'] { --background: #09090b; --background-rgb: 9 9 11; --surface-rgb: 13 14 24; --surface-contrast-rgb: 2 4 10; --primary: #3b82f6; --primary-rgb: 59 130 246; --bg-color: #09090b; }
-[data-theme='dark-one'] { --background: #1b1e23; --background-rgb: 27 30 35; --surface-rgb: 33 37 43; --surface-contrast-rgb: 45 52 60; --primary: #61afef; --primary-rgb: 97 175 239; --bg-color: #1b1e23; }
-[data-theme='tech'] { --background: #020617; --background-rgb: 2 6 23; --surface-rgb: 15 23 42; --surface-contrast-rgb: 2 6 23; --primary: #06b6d4; --primary-rgb: 6 182 212; --bg-color: #020617; }
-[data-theme='midnight'] { --background: #000000; --background-rgb: 0 0 0; --surface-rgb: 10 10 15; --surface-contrast-rgb: 0 0 0; --primary: #fbbf24; --primary-rgb: 251 191 36; --bg-color: #000000; }
-
-[data-theme='purple'] { --background: #f5f3ff; --primary: #7c3aed; --primary-rgb: 124 58 237; --bg-color: #f5f3ff; }
-[data-theme='green'] { --background: #f0fdf4; --primary: #059669; --primary-rgb: 5 150 105; --bg-color: #f0fdf4; }
-[data-theme='business'] { --background: #fffaf0; --primary: #c28100; --primary-rgb: 194 129 0; --bg-color: #fffaf0; }
-[data-theme='sunset'] { --background: #fff7ed; --primary: #ea580c; --primary-rgb: 234 88 12; --bg-color: #fff7ed; }
-[data-theme='ocean'] { --background: #f0f9ff; --primary: #0284c7; --primary-rgb: 2 132 199; --bg-color: #f0f9ff; }
-[data-theme='forest'] { --background: #f0fdf4; --primary: #166534; --primary-rgb: 22 101 52; --bg-color: #f0fdf4; }
-[data-theme='rose'] { --background: #fff1f2; --primary: #db2777; --primary-rgb: 219 39 119; --bg-color: #fff1f2; }
-[data-theme='aurora'] { --background: #f0fdfa; --primary: #0d9488; --primary-rgb: 13 148 136; --bg-color: #f0fdfa; }
-[data-theme='sakura'] { --background: #fff5f7; --primary: #db2777; --primary-rgb: 219 39 119; --bg-color: #fff5f7; }
-
 /* ============================================================
    GLASSMORPHISM CORE
    ============================================================ */
@@ -163,7 +95,7 @@
   transition: all 0.3s ease;
 }
 .glass-card:hover {
-  border-color: rgb(var(--primary-rgb) / 0.3);
+  border-color: rgb(var(--app-primary-rgb) / 0.3);
   background: rgb(var(--surface-rgb) / calc(var(--glass-opacity) + 0.05));
 }
 .glass-sidebar {
@@ -182,7 +114,8 @@
   color: white;
 }
 .sidebar-hover:hover {
-  background: rgb(var(--primary-rgb) / 0.08);
+  background: rgb(var(--app-primary-rgb) / 0.12);
+  color: var(--primary);
 }
 .app-input {
   background: rgb(var(--surface-rgb) / 0.5);
@@ -208,10 +141,10 @@
   .sidebar-foreground { color: var(--foreground); }
   .sidebar-muted { color: var(--muted-foreground); opacity: 0.7; }
   .sidebar-active { background: var(--primary); color: white; }
-  .sidebar-hover:hover { background: rgb(var(--primary-rgb) / 0.08); }
+  .sidebar-hover:hover { background: rgb(var(--app-primary-rgb) / 0.12); color: var(--primary); }
 
 /* 补全 Kiro 遗留的特定类名 */
-.card-selected { border-color: rgb(var(--primary-rgb) / 0.4); background: rgb(var(--primary-rgb) / 0.05); }
+.card-selected { border-color: rgb(var(--app-primary-rgb) / 0.4); background: rgb(var(--app-primary-rgb) / 0.05); }
 .card-current { border-color: rgb(34 197 94 / 0.3); background: rgb(34 197 94 / 0.05); }
 .card-banned { border-color: rgb(239 68 68 / 0.3); background: rgb(239 68 68 / 0.05); }
 
@@ -220,7 +153,7 @@
   filter: blur(120px); border-radius: 100%;
   z-index: -1; pointer-events: none;
   opacity: var(--bg-glow-opacity);
-  background: radial-gradient(circle, rgb(var(--primary-rgb)), transparent 70%);
+  background: radial-gradient(circle, rgb(var(--app-primary-rgb)), transparent 70%);
 }
 .bg-glow-1 { top: -10%; left: -10%; animation: float 20s infinite alternate; }
 .bg-glow-2 { bottom: -10%; right: -10%; animation: float 25s infinite alternate-reverse; }
@@ -247,9 +180,13 @@
 
 /* 滚动条细化 */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: rgb(var(--primary-rgb) / 0.2); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgb(var(--primary-rgb) / 0.4); }
+::-webkit-scrollbar-thumb { background: rgb(var(--app-primary-rgb) / 0.2); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--app-primary-rgb) / 0.4); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 隐藏滚动条但保留滚动能力 */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 /* 动画定义 */
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }

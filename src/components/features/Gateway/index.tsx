@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../../hooks/useApp'
+import { getQuota, getUsed, getSubPlan, formatUsage } from '../../../utils/accountStats'
 import { Stack, Group, Badge, Card, Text } from '@/components/shared/layout'
 import GatewayConfigComponent from './GatewayConfig'
 import { RequestLogsDialog } from './RequestLogsDialog'
@@ -83,9 +84,19 @@ function GatewayPage() {
   )
 
   const accountOptions = useMemo(
-    () => accounts.map(account => ({
-      value: account.id,
-      label: formatGatewayAccountOptionLabel(account)})),
+    () => accounts.map(account => {
+      const used = getUsed(account)
+      const plan = getSubPlan(account) || 'Free'
+      const breakdown = account.usageData?.usageBreakdownList?.[0]
+      const overageEnabled = account.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE'
+        && account.usageData?.overageConfiguration?.overageStatus === 'ENABLED'
+      const total = getQuota(account) + (overageEnabled ? (breakdown?.overageCap || 0) : 0)
+      const percent = total > 0 ? Math.round((used / total) * 100) : 0
+      return {
+        value: account.id,
+        label: `${formatGatewayAccountOptionLabel(account)} · ${plan} · ${formatUsage(used)}/${formatUsage(total)} (${percent}%)${overageEnabled ? ' ⚡超额' : ''}`
+      }
+    }),
     [accounts]
   )
 

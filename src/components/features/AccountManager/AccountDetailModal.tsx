@@ -322,7 +322,7 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
         {/* Body - 使用 DialogBody 的 noPadding，自己控制每个区域的 padding */}
         <DialogBody noPadding>
           {/* 配额总览 */}
-          <div className={`border-b border-border px-6 py-4`}>
+          <div className={`border-b border-border px-6 py-5`}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className={`p-1.5 rounded-lg bg-muted/30`}>
@@ -360,53 +360,29 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                 </span>
               </div>
               <div className={`h-4 bg-muted/30 rounded-full overflow-hidden shadow-inner`}>
-                <div 
+                <div
                   className={`h-full rounded-full transition-all duration-500 shadow-lg ${
-                    totalPercent > 80 ? 'bg-gradient-to-r from-red-400 to-red-500' 
-                    : totalPercent > 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500' 
+                    totalPercent > 80 ? 'bg-gradient-to-r from-red-400 to-red-500'
+                    : totalPercent > 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500'
                     : 'bg-gradient-to-r from-green-400 to-emerald-500'
-                  }`} 
-                  style={{ width: `${totalPercent}%` }} 
+                  }`}
+                  style={{ width: `${totalPercent}%` }}
                 />
               </div>
+              {/* 合并自原配额卡片：重置时间 + 有数据时的试用/奖励额度 */}
+              <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
+                {currentAccount.usageData?.nextDateReset && (
+                  <span className="flex items-center gap-1">🔄 {new Date(currentAccount.usageData.nextDateReset * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}{t('detail.reset')}</span>
+                )}
+                {freeTrialQuota > 0 && (
+                  <span className="flex items-center gap-1">⏰ {t('detail.freeTrial')} {formatUsage(freeTrialUsed)}/{formatUsage(freeTrialQuota)}</span>
+                )}
+                {bonusQuota > 0 && (
+                  <span className="flex items-center gap-1">🎁 {t('detail.bonusTotal')} {formatUsage(bonusUsed)}/{formatUsage(bonusQuota)}</span>
+                )}
+              </div>
             </div>
-            
-            <div className="grid grid-cols-3 gap-3">
-              {/* 主配额卡片 */}
-              <QuotaCard
-                title={t('detail.mainQuota')}
-                used={form.used}
-                quota={form.quota}
-                icon="🔄"
-                expiry={currentAccount.usageData?.nextDateReset ? `${new Date(currentAccount.usageData.nextDateReset * 1000).toLocaleDateString()} ${t('detail.reset')}` : null}
-                colors={colors}
-                t={t}
-              />
-              
-              {/* 试用配额卡片 */}
-              <QuotaCard
-                title={t('detail.freeTrial')}
-                used={freeTrialUsed}
-                quota={freeTrialQuota}
-                status={freeTrialInfo?.freeTrialStatus}
-                icon="⏰"
-                expiry={freeTrialInfo?.freeTrialExpiry ? `${new Date(freeTrialInfo.freeTrialExpiry * 1000).toLocaleDateString()} ${t('detail.expires')}` : null}
-                colors={colors}
-                t={t}
-              />
-              
-              {/* 奖励配额卡片 */}
-              <QuotaCard
-                title={t('detail.bonusTotal')}
-                used={bonusUsed}
-                quota={bonusQuota}
-                icon="🎁"
-                expiry={bonuses.length > 0 ? `${bonuses.length} ${t('detail.bonusCount')}` : null}
-                colors={colors}
-                t={t}
-              />
-            </div>
-            
+
             {/* Bonuses 列表 */}
             {bonuses.length > 0 && (
               <div className="mt-6 pt-5 border-t border-border">
@@ -450,98 +426,10 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                 </div>
               </div>
             )}
-            
-            {/* 订阅信息 */}
-            <div className="mt-6 pt-5 border-t border-border">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-lg">📋</span>
-                <span className={`text-sm font-medium text-foreground`}>订阅信息</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className={`p-3 rounded-lg bg-muted/30`}>
-                  <div className={`text-xs text-muted-foreground mb-1`}>{t('detail.userId')}</div>
-                  <div className={`text-foreground font-mono text-xs truncate`} title={currentAccount.usageData?.userInfo?.userId}>
-                    {currentAccount.usageData?.userInfo?.userId?.slice(-12) || '-'}
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg bg-muted/30`}>
-                  <div className={`text-xs text-muted-foreground mb-1`}>{t('detail.email')}</div>
-                  <div className={`text-foreground text-xs truncate`}>
-                    {currentAccount.usageData?.userInfo?.email || currentAccount.email || getAccountDisplayName(currentAccount)}
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg bg-muted/30`}>
-                  <div className={`text-xs text-muted-foreground mb-1`}>{t('detail.subscriptionType')}</div>
-                  <div className={`text-foreground font-mono text-xs truncate`} title={currentAccount.usageData?.subscriptionInfo?.type}>
-                    {currentAccount.usageData?.subscriptionInfo?.type || '-'}
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg bg-muted/30`}>
-                  <div className={`text-xs text-muted-foreground mb-1`}>{t('detail.upgradeable')}</div>
-                  <div className={"text-foreground"}>
-                    {currentAccount.usageData?.subscriptionInfo?.upgradeCapability === 'UPGRADE_CAPABLE' ? (
-                      <span className="text-green-500 font-medium">✓ {t('common.yes')}</span>
-                    ) : (
-                      <span className={"text-muted-foreground"}>✗ {t('common.no')}</span>
-                    )}
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg bg-muted/30`}>
-                  <div className={`text-xs text-muted-foreground mb-1`}>超额能力</div>
-                  <div className={"text-foreground"}>
-                    {currentAccount.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE' ? (
-                      <span className="text-green-500 font-medium">✓ 支持</span>
-                    ) : (
-                      <span className={"text-muted-foreground"}>✗ 不支持</span>
-                    )}
-                  </div>
-                </div>
-                {currentAccount.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE' && (
-                  <div className={`p-3 rounded-lg bg-muted/30`}>
-                    <div className={`text-xs text-muted-foreground mb-1`}>超额状态</div>
-                    <div className={"text-foreground"}>
-                      {currentAccount.usageData?.overageConfiguration?.overageStatus === 'ENABLED' ? (
-                        <span className="text-green-500 font-medium">✓ 已开启</span>
-                      ) : (
-                        <span className={"text-muted-foreground"}>✗ 已关闭</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {breakdown?.overageRate != null && (
-                  <>
-                    <div className={`p-3 rounded-lg bg-muted/30`}>
-                      <div className={`text-xs text-muted-foreground mb-1`}>超额费率</div>
-                      <div className={`text-foreground font-medium`}>
-                        {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageRate}/Credit
-                      </div>
-                    </div>
-                    <div className={`p-3 rounded-lg bg-muted/30`}>
-                      <div className={`text-xs text-muted-foreground mb-1`}>超额上限</div>
-                      <div className={`text-foreground font-medium`}>
-                        {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageCap}
-                      </div>
-                    </div>
-                    <div className={`p-3 rounded-lg bg-muted/30`}>
-                      <div className={`text-xs text-muted-foreground mb-1`}>当前超额</div>
-                      <div className={`text-foreground font-bold ${breakdown.currentOverages > 0 ? 'text-orange-500' : ''}`}>
-                        {formatUsage(breakdown.currentOverages || 0)}
-                      </div>
-                    </div>
-                    <div className={`p-3 rounded-lg bg-muted/30`}>
-                      <div className={`text-xs text-muted-foreground mb-1`}>超额费用</div>
-                      <div className={`text-foreground font-bold ${breakdown.overageCharges > 0 ? 'text-orange-500' : ''}`}>
-                        {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageCharges?.toFixed(2) || '0.00'}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
           </div>
 
-          {/* 基本信息 & 订阅详情 - 并排布局 */}
-          <div className="px-6 py-4">
+          {/* 账号信息 & 订阅与超额 - 并排布局 */}
+          <div className="px-6 py-5 border-b border-border">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* 基本信息 */}
               <section className="space-y-3">
@@ -549,10 +437,15 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                   <User size={16} className="text-primary" />
                   {t('detail.basicInfo')}
                 </h3>
-                <div className="bg-muted/30 border rounded-xl p-4 space-y-4">
+                <div className="bg-muted/60 border border-border rounded-xl p-4 space-y-4 shadow-sm">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">{t('detail.emailAddress')}</label>
-                    <div className="text-sm font-mono break-all select-all">{currentAccount.email || getAccountDisplayName(currentAccount)}</div>
+                    <div className="flex items-center gap-2 group">
+                      <div className="text-sm font-mono break-all select-all flex-1">{currentAccount.email || getAccountDisplayName(currentAccount)}</div>
+                      <button onClick={() => handleCopy(currentAccount.email || '', 'email')} className="p-1 rounded hover:bg-muted/60 transition-colors shrink-0 opacity-0 group-hover:opacity-100 cursor-pointer" title="复制">
+                        {copied === 'email' ? <Check size={13} className="text-green-500" /> : <Copy size={13} className="text-muted-foreground" />}
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1 min-w-0">
@@ -565,56 +458,99 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">User ID</label>
-                    <div className="text-xs font-mono break-all bg-background p-2 rounded border select-all">
-                      {currentAccount.usageData?.userInfo?.userId || '-'}
+                    <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Hash size={11} /> User ID</label>
+                    <div className="flex items-center gap-2 group bg-background/60 border border-border/60 rounded-lg p-2">
+                      <div className="text-xs font-mono truncate select-all flex-1" title={currentAccount.usageData?.userInfo?.userId || '-'}>
+                        {currentAccount.usageData?.userInfo?.userId || '-'}
+                      </div>
+                      <button onClick={() => handleCopy(currentAccount.usageData?.userInfo?.userId || '', 'userId')} className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-muted/60 transition-colors shrink-0 text-muted-foreground cursor-pointer" title="复制">
+                        {copied === 'userId' ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                      </button>
                     </div>
                   </div>
                 </div>
               </section>
 
-              {/* 订阅详情 */}
+              {/* 订阅与超额 */}
               <section className="space-y-3">
                 <h3 className="flex items-center gap-2 font-bold text-sm text-foreground">
                   <Shield size={16} className="text-primary" />
-                  订阅详情
+                  订阅与超额
                 </h3>
-                <div className="bg-muted/30 border rounded-xl p-4 text-sm space-y-3">
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                <div className="bg-muted/60 border border-border rounded-xl p-4 text-sm space-y-0.5 shadow-sm">
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                    <span className="text-muted-foreground text-xs">订阅类型</span>
+                    <span className="font-mono text-xs font-medium">{currentAccount.usageData?.subscriptionInfo?.type || '-'}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">Region</span>
                     <span className="font-mono text-xs px-1.5 py-0.5 bg-muted rounded-md">us-east-1</span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">Token 到期</span>
                     <span className="font-medium text-xs">{currentAccount.expiresAt || '-'}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
-                    <span className="text-muted-foreground text-xs">订阅类型</span>
-                    <span className="font-mono text-xs">{currentAccount.usageData?.subscriptionInfo?.type || '-'}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
-                    <span className="text-muted-foreground text-xs">超额费率</span>
-                    <span className="font-mono text-xs">
-                      {breakdown?.overageRate ? `$${breakdown.overageRate}/${breakdown.unit === 'INVOCATIONS' ? 'Credit' : breakdown.unit}` : '-'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">资源类型</span>
-                    <span className="font-mono text-xs">{breakdown?.resourceType || '-'}</span>
+                    <span className="font-mono text-xs font-medium">{breakdown?.resourceType || '-'}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1">
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">可升级</span>
-                    <span className={`text-xs font-bold ${currentAccount.usageData?.subscriptionInfo?.upgradeCapability === 'UPGRADE_CAPABLE' ? 'text-green-600' : 'text-muted-foreground'}`}>
-                      {currentAccount.usageData?.subscriptionInfo?.upgradeCapability === 'UPGRADE_CAPABLE' ? 'YES' : 'NO'}
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${currentAccount.usageData?.subscriptionInfo?.upgradeCapability === 'UPGRADE_CAPABLE' ? 'bg-green-500/15 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                      {currentAccount.usageData?.subscriptionInfo?.upgradeCapability === 'UPGRADE_CAPABLE' ? '✓ YES' : 'NO'}
                     </span>
                   </div>
+                  <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                    <span className="text-muted-foreground text-xs">超额能力</span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${currentAccount.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE' ? 'bg-green-500/15 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                      {currentAccount.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE' ? '✓ 支持' : '不支持'}
+                    </span>
+                  </div>
+                  {currentAccount.usageData?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE' && (
+                    <>
+                      <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                        <span className="text-muted-foreground text-xs">超额状态</span>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${currentAccount.usageData?.overageConfiguration?.overageStatus === 'ENABLED' ? 'bg-green-500/15 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                          {currentAccount.usageData?.overageConfiguration?.overageStatus === 'ENABLED' ? '✓ 已开启' : '已关闭'}
+                        </span>
+                      </div>
+                      {breakdown?.overageRate != null && (
+                        <>
+                          <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                            <span className="text-muted-foreground text-xs">超额费率</span>
+                            <span className="font-mono text-xs font-semibold">
+                              {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageRate}/Credit
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                            <span className="text-muted-foreground text-xs">超额上限</span>
+                            <span className="font-mono text-xs font-semibold">
+                              {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageCap}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
+                            <span className="text-muted-foreground text-xs">当前超额</span>
+                            <span className={`font-mono text-sm font-bold ${breakdown.currentOverages > 0 ? 'text-orange-500' : 'text-foreground'}`}>
+                              {formatUsage(breakdown.currentOverages || 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors">
+                            <span className="text-muted-foreground text-xs">超额费用</span>
+                            <span className={`font-mono text-sm font-bold ${breakdown.overageCharges > 0 ? 'text-orange-500' : 'text-foreground'}`}>
+                              {breakdown.currency === 'USD' ? '$' : breakdown.currency}{breakdown.overageCharges?.toFixed(2) || '0.00'}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               </section>
             </div>
           </div>
 
           {/* 账户可用模型 */}
-          <div className={`px-6 py-4`}>
+          <div className={`px-6 py-5`}>
             <div 
               className="flex items-center gap-2 cursor-pointer select-none"
               onClick={() => setModelsExpanded(!modelsExpanded)}
@@ -652,7 +588,7 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                   {t('detail.noModels')}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[320px] overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[320px] overflow-y-auto no-scrollbar">
                   {models.map((model, index) => (
                     <div 
                       key={model.modelId} 

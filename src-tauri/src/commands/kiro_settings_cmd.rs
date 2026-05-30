@@ -6,32 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_SAFE_TRUSTED_COMMANDS: &[&str] = &[
-    "npm run *",
-    "npm test *",
-    "pnpm run *",
-    "pnpm test *",
-    "yarn run *",
-    "yarn test *",
-    "bun run *",
-    "bun test *",
-    "cargo check *",
-    "cargo test *",
-    "cargo build *",
-    "cargo clippy *",
-    "cargo fmt *",
-    "git status",
-    "git diff *",
-    "git log *",
-    "git show *",
-    "git branch *",
-    "git rev-parse *",
-    "cat *",
-    "ls *",
-    "dir *",
-    "pwd",
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)] // 设置结构体需要多个布尔字段来表示不同的开关选项
@@ -140,7 +114,9 @@ fn write_kiro_settings_json(path: &Path, settings: &serde_json::Value) -> Result
     let content =
         serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {e}"))?;
 
-    std::fs::write(path, content).map_err(|e| format!("写入设置文件失败: {e}"))
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, content).map_err(|e| format!("写入设置文件失败: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("写入设置文件失败: {e}"))
 }
 
 async fn run_kiro_blocking<T, F>(task: F) -> Result<T, String>
@@ -426,36 +402,6 @@ fn get_kiro_settings_inner() -> Result<KiroSettings, String> {
     })
 }
 
-fn set_kiro_proxy_inner(proxy: String) -> Result<(), String> {
-    let path = get_kiro_settings_path().ok_or("无法获取 Kiro 设置路径")?;
-
-    let mut settings = load_kiro_settings_json(&path)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        if proxy.is_empty() {
-            // 清除代理时，必须把 proxySupport 设为 off，否则 Kiro 会尝试连接系统代理
-            obj.remove("http.proxy");
-            obj.insert(
-                "http.proxySupport".to_string(),
-                serde_json::Value::String("off".to_string()),
-            );
-        } else {
-            // 设置代理时，proxySupport 必须为 on，同时提供代理地址
-            obj.insert("http.proxy".to_string(), serde_json::Value::String(proxy));
-            obj.insert(
-                "http.proxyStrictSSL".to_string(),
-                serde_json::Value::Bool(false),
-            );
-            obj.insert(
-                "http.proxySupport".to_string(),
-                serde_json::Value::String("on".to_string()),
-            );
-        }
-    }
-
-    write_kiro_settings_json(&path, &settings)
-}
-
 fn set_kiro_model_inner(model: String) -> Result<(), String> {
     let path = get_kiro_settings_path().ok_or("无法获取 Kiro 设置路径")?;
 
@@ -477,267 +423,174 @@ pub async fn get_kiro_settings() -> Result<KiroSettings, String> {
 }
 
 #[tauri::command]
-pub async fn set_kiro_proxy(proxy: String) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_proxy_inner(proxy)).await
-}
-
-#[tauri::command]
 pub async fn set_kiro_model(model: String) -> Result<(), String> {
     run_kiro_blocking(move || set_kiro_model_inner(model)).await
 }
 
-fn set_kiro_codebase_indexing_inner(enabled: bool) -> Result<(), String> {
-    set_kiro_generic_inner(
-        "kiroAgent.enableCodebaseIndexing".to_string(),
-        serde_json::json!(enabled),
-    )
+// ===== 通用设置写入 =====
+
+/// 统一的 Kiro IDE 设置写入：读 JSON、建父目录、确保对象、应用变更、原子写回。
+fn update_kiro_setting<F>(mutate: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_json::Value),
+{
+    let path = get_kiro_settings_path().ok_or("无法获取 Kiro 设置路径")?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建设置目录失败: {e}"))?;
+    }
+
+    let mut settings = load_kiro_settings_json(&path)?;
+    if !settings.is_object() {
+        settings = serde_json::json!({});
+    }
+
+    mutate(&mut settings);
+    write_kiro_settings_json(&path, &settings)
+}
+
+/// 将前端的 mode + 自定义命令文本转换为 IDE 的 `kiroAgent.trustedCommands` 数组。
+fn trusted_commands_value(mode: &str, custom_commands: &str) -> serde_json::Value {
+    match mode {
+        "all" => serde_json::json!(["*"]),
+        "common" => {
+            let list: Vec<String> = custom_commands
+                .split('\n')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(String::from)
+                .collect();
+            serde_json::json!(list)
+        }
+        _ => serde_json::json!([]),
+    }
+}
+
+#[tauri::command]
+pub async fn set_kiro_proxy(proxy: String) -> Result<(), String> {
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            if let Some(obj) = json.as_object_mut() {
+                if proxy.trim().is_empty() {
+                    obj.remove("http.proxy");
+                } else {
+                    obj.insert("http.proxy".to_string(), serde_json::Value::String(proxy));
+                }
+            }
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_codebase_indexing(enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_codebase_indexing_inner(enabled)).await
-}
-
-fn set_kiro_trusted_commands_inner(
-    mode: String,
-    custom_commands: Option<String>,
-) -> Result<(), String> {
-    let path = get_kiro_settings_path().ok_or("无法获取 Kiro 设置路径")?;
-
-    let mut settings = load_kiro_settings_json(&path)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        let commands = match mode.as_str() {
-            "all" => serde_json::json!(["*"]),
-            "common" => {
-                // 如果有自定义命令，解析它；否则使用默认列表
-                if let Some(ref custom) = custom_commands {
-                    if custom.trim().is_empty() {
-                        serde_json::json!(DEFAULT_SAFE_TRUSTED_COMMANDS)
-                    } else {
-                        let cmds: Vec<&str> = custom
-                            .lines()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .collect();
-                        if cmds.contains(&"*") {
-                            return Err("common 模式不允许使用 *，如需全部信任请切换到“全部信任”"
-                                .to_string());
-                        }
-                        serde_json::json!(cmds)
-                    }
-                } else {
-                    serde_json::json!(DEFAULT_SAFE_TRUSTED_COMMANDS)
-                }
-            }
-            "none" => serde_json::json!([]),
-            _ => return Err(format!("不支持的 trusted commands 模式: {mode}")),
-        };
-        obj.insert("kiroAgent.trustedCommands".to_string(), commands);
-    }
-
-    write_kiro_settings_json(&path, &settings)
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, "kiroAgent.enableCodebaseIndexing", enabled);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn set_kiro_trusted_commands(
-    mode: String,
-    custom_commands: Option<String>,
-) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_trusted_commands_inner(mode, custom_commands)).await
-}
-
-// 设置 Agent 自主模式
-fn set_kiro_agent_autonomy_inner(autonomy: String) -> Result<(), String> {
-    set_kiro_generic_inner(
-        "kiroAgent.agentAutonomy".to_string(),
-        serde_json::json!(autonomy),
-    )
+pub async fn set_kiro_trusted_commands(mode: String, custom_commands: String) -> Result<(), String> {
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            let value = trusted_commands_value(&mode, &custom_commands);
+            upsert_json_if_changed(json, "kiroAgent.trustedCommands", value);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_agent_autonomy(autonomy: String) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_agent_autonomy_inner(autonomy)).await
-}
-
-// 设置 Tab 自动补全
-fn set_kiro_tab_autocomplete_inner(enabled: bool) -> Result<(), String> {
-    set_kiro_generic_inner(
-        "kiroAgent.enableTabAutocomplete".to_string(),
-        serde_json::json!(enabled),
-    )
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_string_if_changed(json, "kiroAgent.agentAutonomy", &autonomy);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_tab_autocomplete(enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_tab_autocomplete_inner(enabled)).await
-}
-
-// 设置使用统计
-fn set_kiro_usage_summary_inner(enabled: bool) -> Result<(), String> {
-    set_kiro_generic_inner(
-        "kiroAgent.usageSummary".to_string(),
-        serde_json::json!(enabled),
-    )
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, "kiroAgent.enableTabAutocomplete", enabled);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_usage_summary(enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_usage_summary_inner(enabled)).await
-}
-
-// 设置调试日志
-fn set_kiro_debug_logs_inner(enabled: bool) -> Result<(), String> {
-    set_kiro_generic_inner(
-        "kiroAgent.enableDebugLogs".to_string(),
-        serde_json::json!(enabled),
-    )
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, "kiroAgent.usageSummary", enabled);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_debug_logs(enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_debug_logs_inner(enabled)).await
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, "kiroAgent.enableDebugLogs", enabled);
+        })
+    })
+    .await
 }
 
-// 设置通知选项
-fn set_kiro_notification_inner(key: String, enabled: bool) -> Result<(), String> {
-    set_kiro_generic_inner(key, serde_json::json!(enabled))
+#[tauri::command]
+pub async fn set_kiro_trusted_tools(tools: Vec<String>) -> Result<(), String> {
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_json_if_changed(json, "kiroAgent.trustedTools", serde_json::json!(tools));
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_kiro_reference_tracker(enabled: bool) -> Result<(), String> {
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, "kiroAgent.codeReferences.referenceTracker", enabled);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_kiro_configure_mcp(mode: String) -> Result<(), String> {
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_string_if_changed(json, "kiroAgent.configureMCP", &mode);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn set_kiro_notification(key: String, enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || set_kiro_notification_inner(key, enabled)).await
-}
-
-// ===== 通用设置写入 =====
-
-/// 通用写入 Kiro IDE settings.json（支持 bool / string / string[] 类型）
-/// 同时同步到 app-settings.json
-fn set_kiro_generic_inner(key: String, value: serde_json::Value) -> Result<(), String> {
-    let path = get_kiro_settings_path().ok_or("无法获取 Kiro 设置路径")?;
-
-    let mut settings = load_kiro_settings_json(&path)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert(key.clone(), value.clone());
-    }
-
-    write_kiro_settings_json(&path, &settings)?;
-
-    // 同步到 app-settings.json
-    sync_to_app_settings(&key, &value);
-
-    Ok(())
-}
-
-/// 将 IDE 设置变更同步到 app-settings.json
-fn sync_to_app_settings(key: &str, value: &serde_json::Value) {
-    let mut app = super::app_settings_cmd::get_app_settings_inner().unwrap_or_default();
-    match key {
-        "kiroAgent.trustedTools" => {
-            app.trusted_tools = value.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            });
-        }
-        "kiroAgent.codeReferences.referenceTracker" => {
-            app.reference_tracker = value.as_bool();
-        }
-        "kiroAgent.configureMCP" => {
-            app.configure_mcp = value.as_str().map(String::from);
-        }
-        "telemetry.dataSharingAndPromptLogging.contentCollectionForServiceImprovement" => {
-            app.telemetry_content_collection = value.as_bool();
-        }
-        "telemetry.dataSharingAndPromptLogging.usageAnalyticsAndPerformanceMetrics" => {
-            app.telemetry_usage_analytics = value.as_bool();
-        }
-        "telemetry.editStats.enabled" => {
-            app.telemetry_edit_stats = value.as_bool();
-        }
-        "telemetry.feedback.enabled" => {
-            app.telemetry_feedback = value.as_bool();
-        }
-        "kiroAgent.enableCodebaseIndexing" => {
-            app.enable_codebase_indexing = value.as_bool();
-        }
-        "kiroAgent.enableTabAutocomplete" => {
-            app.enable_tab_autocomplete = value.as_bool();
-        }
-        "kiroAgent.usageSummary" => {
-            app.usage_summary = value.as_bool();
-        }
-        "kiroAgent.enableDebugLogs" => {
-            app.enable_debug_logs = value.as_bool();
-        }
-        "kiroAgent.notifications.agent.actionRequired" => {
-            app.notify_action_required = value.as_bool();
-        }
-        "kiroAgent.notifications.agent.failure" => {
-            app.notify_failure = value.as_bool();
-        }
-        "kiroAgent.notifications.agent.success" => {
-            app.notify_success = value.as_bool();
-        }
-        "kiroAgent.notifications.billing" => {
-            app.notify_billing = value.as_bool();
-        }
-        _ => return, // 不需要同步的 key
-    }
-    let _ = super::app_settings_cmd::save_settings_to_file(&app);
-}
-
-/// 设置 trustedTools（字符串数组）
-#[tauri::command]
-pub async fn set_kiro_trusted_tools(tools: Vec<String>) -> Result<(), String> {
     run_kiro_blocking(move || {
-        set_kiro_generic_inner(
-            "kiroAgent.trustedTools".to_string(),
-            serde_json::json!(tools),
-        )
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, &key, enabled);
+        })
     })
     .await
 }
 
-/// 设置 referenceTracker
-#[tauri::command]
-pub async fn set_kiro_reference_tracker(enabled: bool) -> Result<(), String> {
-    run_kiro_blocking(move || {
-        set_kiro_generic_inner(
-            "kiroAgent.codeReferences.referenceTracker".to_string(),
-            serde_json::json!(enabled),
-        )
-    })
-    .await
-}
-
-/// 设置 configureMCP（"Enabled" / "Disabled"）
-#[tauri::command]
-pub async fn set_kiro_configure_mcp(mode: String) -> Result<(), String> {
-    run_kiro_blocking(move || {
-        set_kiro_generic_inner(
-            "kiroAgent.configureMCP".to_string(),
-            serde_json::json!(mode),
-        )
-    })
-    .await
-}
-
-/// 设置遥测选项（通用 bool，key 由前端传入）
 #[tauri::command]
 pub async fn set_kiro_telemetry(key: String, enabled: bool) -> Result<(), String> {
-    // 白名单校验，防止任意 key 写入
-    let allowed = [
-        "telemetry.dataSharingAndPromptLogging.contentCollectionForServiceImprovement",
-        "telemetry.dataSharingAndPromptLogging.usageAnalyticsAndPerformanceMetrics",
-        "telemetry.editStats.enabled",
-        "telemetry.feedback.enabled",
-    ];
-    if !allowed.contains(&key.as_str()) {
-        return Err(format!("不允许的遥测 key: {key}"));
-    }
-    run_kiro_blocking(move || set_kiro_generic_inner(key, serde_json::json!(enabled))).await
+    run_kiro_blocking(move || {
+        update_kiro_setting(|json| {
+            upsert_bool_if_changed(json, &key, enabled);
+        })
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -745,7 +598,8 @@ mod tests {
     use super::{
         classify_trusted_commands, format_custom_trusted_commands, get_optional_string_array,
         sync_optional_configure_mcp_if_changed, sync_optional_trusted_tools_if_changed,
-        upsert_bool_if_changed, upsert_json_if_changed, upsert_string_if_changed,
+        trusted_commands_value, upsert_bool_if_changed, upsert_json_if_changed,
+        upsert_string_if_changed,
     };
 
     #[test]
@@ -828,8 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_command_helpers_preserve_existing_mode_rules() {
-        assert_eq!(classify_trusted_commands(&[]), "none");
+    fn trusted_command_helpers_preserve_existing_mode_rules() {        assert_eq!(classify_trusted_commands(&[]), "none");
         assert_eq!(classify_trusted_commands(&["*".to_string()]), "all");
         assert_eq!(
             classify_trusted_commands(&["git status".to_string(), "cargo test *".to_string()]),
@@ -841,6 +694,16 @@ mod tests {
         assert_eq!(
             format_custom_trusted_commands(&["git status".to_string(), "cargo test *".to_string()]),
             Some("git status\ncargo test *".to_string())
+        );
+    }
+
+    #[test]
+    fn trusted_commands_value_inverts_classify_and_format() {
+        assert_eq!(trusted_commands_value("all", ""), serde_json::json!(["*"]));
+        assert_eq!(trusted_commands_value("none", "ignored"), serde_json::json!([]));
+        assert_eq!(
+            trusted_commands_value("common", "git status\n  cargo test *  \n\n"),
+            serde_json::json!(["git status", "cargo test *"])
         );
     }
 

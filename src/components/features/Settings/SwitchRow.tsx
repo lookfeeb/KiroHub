@@ -26,13 +26,22 @@ function SwitchRow({
 }: SwitchRowProps) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors"
+      className={`group/row relative flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-all duration-200 ${
+        checked
+          ? 'border-primary/30 bg-primary/[0.06] hover:bg-primary/[0.09]'
+          : 'border-border bg-card hover:border-border/80 hover:bg-muted/40'
+      }`}
       title={title}
     >
+      {checked && <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />}
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
-      {icon && <span className="text-muted-foreground flex items-center">{icon}</span>}
+      {icon && (
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors ${
+          checked ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground group-hover/row:text-foreground'
+        }`}>{icon}</span>
+      )}
       <span className="text-sm font-medium text-foreground">{label}</span>
-      {hint && <span className="text-xs text-muted-foreground ml-1">{hint}</span>}
+      {hint && <span className="text-xs text-muted-foreground ml-0.5">{hint}</span>}
       {trailing && <div className="ml-auto flex items-center gap-2">{trailing}</div>}
     </div>
   )

@@ -1,9 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// 速度测试 - 修改 1
-
 // 核心模块
 mod core;
+mod db;
 mod state;
 
 // 功能模块
@@ -14,6 +13,8 @@ mod clients;
 mod commands;
 mod gateway;
 mod kiro;
+mod mcp_oauth;
+mod mcp_proxy;
 mod models;
 mod services;
 mod tasks;  // 后台任务模块
@@ -42,8 +43,9 @@ use commands::app_settings_cmd::{
     bind_machine_id_to_account, get_all_bound_machine_ids, get_app_settings, get_bound_machine_id,
     get_usage_history, save_app_settings, save_usage_history_entry, unbind_machine_id_from_account,
     get_custom_kiro_path, set_custom_kiro_path, clear_custom_kiro_path,
+    get_current_cli_account_id,
 };
-use commands::app_data_cmd::{get_app_data_dir, open_app_data_dir};
+use commands::app_data_cmd::{backup_app_database, get_app_data_dir, open_app_data_dir};
 //授权相关
 use commands::auth_cmd::{
     cancel_kiro_login, get_current_user, get_supported_providers, handle_kiro_social_callback,
@@ -75,12 +77,11 @@ use commands::kiro_cli_cmd::{
     check_cli_installation, get_kiro_cli_default_path, import_from_kiro_cli,
     read_cli_db_snapshot, rollback_cli_switch, switch_to_cli_account,
 };
-//kiroshe
 use commands::kiro_settings_cmd::{
-    get_kiro_settings, set_kiro_agent_autonomy,
-    set_kiro_codebase_indexing, set_kiro_configure_mcp, set_kiro_debug_logs, set_kiro_model,
-    set_kiro_notification, set_kiro_proxy, set_kiro_reference_tracker, set_kiro_tab_autocomplete,
-    set_kiro_telemetry, set_kiro_trusted_commands, set_kiro_trusted_tools, set_kiro_usage_summary,
+    get_kiro_settings, set_kiro_agent_autonomy, set_kiro_codebase_indexing, set_kiro_configure_mcp,
+    set_kiro_debug_logs, set_kiro_model, set_kiro_notification, set_kiro_proxy,
+    set_kiro_reference_tracker, set_kiro_tab_autocomplete, set_kiro_telemetry,
+    set_kiro_trusted_commands, set_kiro_trusted_tools, set_kiro_usage_summary,
 };
 use commands::machine_guid::{
     clear_macos_override, generate_machine_guid,
@@ -90,36 +91,16 @@ use commands::machine_guid::{
 use commands::mcp_cmd::{
     delete_mcp_server, get_mcp_config, get_mcp_tool_stats, save_mcp_server, toggle_mcp_server,
 };
+use commands::mcp_oauth_cmd::{mcp_oauth_authorize, mcp_oauth_revoke, mcp_oauth_status};
 
-use commands::custom_agents_cmd::{
-    create_custom_agent, delete_custom_agent, get_custom_agent, get_custom_agents,
-    save_custom_agent,
-};
-use commands::hooks_cmd::{create_hook, delete_hook, get_hook, get_hooks, save_hook};
 use commands::session_manager::{
-    list_workspaces, list_sessions, load_session, delete_session, delete_workspace, export_session, search_sessions,
+    list_workspaces, list_sessions, load_session, delete_session, delete_workspace, export_session, search_sessions, get_session_file_path,
 };
 
 
 //代理
 use commands::proxy_cmd::detect_system_proxy;
 
-//Powers
-use commands::powers_cmd::{
-    get_power, get_power_registries, get_powers, get_recommended_powers, install_power,
-    uninstall_power,
-};
-//Steering
-use commands::steering_cmd::{
-    create_default_steering_file, create_initial_project_steering, create_steering_file,
-    delete_steering_file, get_steering_file, get_steering_files, refine_steering_file,
-    save_steering_file,
-};
-//Skills
-use commands::skills_cmd::{
-    create_skill, delete_skill, get_skill, get_skills, import_skill_from_github,
-    import_skill_local, save_skill,
-};
 //Kiro IDE
 use crate::kiro::ide::{
     check_ide_installation, check_kiro_config_files,
@@ -252,6 +233,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         handle_deep_link_event(&app_handle, event.payload());
     });
 
+    // 启动时确保网关至少有一个客户端 API Key：没有则自动生成
+    if let Err(err) = gateway::ensure_client_api_key_exists() {
+        log::warn!("自动生成网关 API Key 失败: {err}");
+    }
+
     // 自动启动网关（如果配置了）
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
@@ -270,6 +256,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // 启动 Token 自动刷新后台任务（参考 Kiro IDE）
     tasks::token_refresh::start_token_refresh_loop(app.handle().clone());
+
+    // 启动 MCP 本地反向代理与令牌自动刷新后台任务
+    tauri::async_runtime::spawn(async {
+        if let Err(e) = mcp_proxy::start_proxy().await {
+            log::error!("MCP 反向代理启动失败: {e}");
+        }
+    });
+    tasks::mcp_token_refresh::start_mcp_token_refresh_loop(app.handle().clone());
 
     // 创建托盘图标
     setup_system_tray(app)?;
@@ -297,7 +291,7 @@ fn setup_system_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
 
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("Kiro Account Manager")
+        .tooltip("KiroHub")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
@@ -358,7 +352,28 @@ fn setup_window_close_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::e
 }
 
 #[allow(clippy::too_many_lines)] // Tauri 框架要求在 main 中注册所有命令，无法拆分
+/// 将旧数据目录 `.kiro-account-manager` 自动迁移到新目录 `.kirohub`
+/// （仅当新目录不存在且旧目录存在时执行整目录重命名，保留全部账号与设置）
+fn migrate_data_dir() {
+    if let Some(base) = dirs::data_dir() {
+        let old = base.join(".kiro-account-manager");
+        let new = base.join(".kirohub");
+        if old.exists() && !new.exists() {
+            match std::fs::rename(&old, &new) {
+                Ok(_) => eprintln!("[Migrate] 数据目录已迁移: {} -> {}", old.display(), new.display()),
+                Err(e) => eprintln!("[Migrate] 数据目录迁移失败: {e}"),
+            }
+        }
+    }
+}
+
 fn main() {
+    // 启动最早期执行：把旧数据目录迁移到新目录（须在 AccountStore::new() 读盘之前）
+    migrate_data_dir();
+    // 初始化 SQLite 全局连接池（须在 AccountStore::new() / GroupTagStore::new() 之前）
+    if let Err(e) = db::init_global() {
+        eprintln!("[DB] 全局连接池初始化失败: {e}");
+    }
     tauri::Builder::default()
         .plugin(setup_log_plugin().build())
         .plugin(tauri_plugin_process::init())
@@ -447,24 +462,25 @@ fn main() {
             close_kiro_ide,
             start_kiro_ide,
             is_kiro_ide_running,
-            // Kiro IDE 设置命令
+            // Kiro IDE 设置命令（仅保留 model_lock 依赖）
             get_kiro_settings,
-            set_kiro_proxy,
             set_kiro_model,
+            set_kiro_proxy,
             set_kiro_codebase_indexing,
             set_kiro_trusted_commands,
             set_kiro_agent_autonomy,
             set_kiro_tab_autocomplete,
             set_kiro_usage_summary,
             set_kiro_debug_logs,
-            set_kiro_notification,
             set_kiro_trusted_tools,
             set_kiro_reference_tracker,
             set_kiro_configure_mcp,
+            set_kiro_notification,
             set_kiro_telemetry,
             // 应用设置命令
             get_app_settings,
             save_app_settings,
+            get_current_cli_account_id,
             // 使用量历史记录命令
             get_usage_history,
             save_usage_history_entry,
@@ -488,6 +504,9 @@ fn main() {
             delete_mcp_server,
             toggle_mcp_server,
             get_mcp_tool_stats,
+            mcp_oauth_authorize,
+            mcp_oauth_status,
+            mcp_oauth_revoke,
             // Gateway 命令
             start_gateway,
             stop_gateway,
@@ -512,46 +531,11 @@ fn main() {
             detect_system_proxy,
             // 更新检查命令
             check_update,
-            // Steering 管理命令
-            get_steering_files,
-            get_steering_file,
-            save_steering_file,
-            delete_steering_file,
-            create_steering_file,
-            create_default_steering_file,
-            create_initial_project_steering,
-            refine_steering_file,
-            // Skills 管理命令
-            get_skills,
-            get_skill,
-            save_skill,
-            delete_skill,
-            create_skill,
-            import_skill_local,
-            import_skill_from_github,
-            // Hooks 管理命令
-            get_hooks,
-            get_hook,
-            save_hook,
-            delete_hook,
-            create_hook,
-            // Custom Agents 管理命令
-            get_custom_agents,
-            get_custom_agent,
-            save_custom_agent,
-            delete_custom_agent,
-            create_custom_agent,
-            // Powers 管理命令
-            get_powers,
-            get_power,
-            install_power,
-            uninstall_power,
-            get_power_registries,
-            get_recommended_powers,
             // Session Manager 命令
             list_workspaces,
             list_sessions,
             load_session,
+            get_session_file_path,
             delete_session,
             delete_workspace,
             export_session,
@@ -563,7 +547,8 @@ fn main() {
             write_codex_cli_config,
             // 应用数据目录命令
             get_app_data_dir,
-            open_app_data_dir
+            open_app_data_dir,
+            backup_app_database
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

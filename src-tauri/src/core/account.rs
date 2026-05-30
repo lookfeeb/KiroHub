@@ -157,6 +157,9 @@ pub struct Account {
     // 启用/禁用开关（禁用的账号网关会跳过）
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    // 上次后台配额巡检时间（RFC3339），用于巡检节流
+    #[serde(default)]
+    pub last_quota_check_at: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -198,6 +201,7 @@ impl Account {
             disabled_reason: None,
             success_count: 0,
             enabled: true,
+            last_quota_check_at: None,
         }
     }
 
@@ -235,6 +239,7 @@ impl Account {
             disabled_reason: None,
             success_count: 0,
             enabled: true,
+            last_quota_check_at: None,
         }
     }
 
@@ -437,89 +442,191 @@ fn is_unavailable_status(status: &str) -> bool {
 
 pub struct AccountStore {
     pub accounts: Vec<Account>,
-    file_path: PathBuf,
 }
 
 impl AccountStore {
     pub fn new() -> Self {
-        let file_path = Self::get_storage_path();
-        let accounts = Self::load_from_file(&file_path);
         let mut store = Self {
-            accounts,
-            file_path,
+            accounts: Self::load_from_db(),
         };
+
+        // 一次性 JSON -> SQLite 迁移：DB 为空且存在旧 accounts.json 时导入并备份
+        if store.accounts.is_empty() {
+            if let Some(legacy) = Self::load_legacy_json() {
+                let count = legacy.len();
+                store.accounts = legacy;
+                if store.try_save_to_file().is_ok() {
+                    Self::backup_legacy_json();
+                    eprintln!("[AccountStore] 已从 accounts.json 迁移 {count} 个账号到 SQLite");
+                }
+            }
+        }
 
         if store.normalize_in_place() {
             if let Err(error) = store.try_save_to_file() {
-                eprintln!("[AccountStore] 规范化账号文件回写失败: {error}");
+                eprintln!("[AccountStore] 规范化账号回写失败: {error}");
             }
         }
 
         store
     }
 
-    fn get_storage_path() -> PathBuf {
+    fn legacy_json_path() -> PathBuf {
         let data_dir = dirs::data_dir().unwrap_or_else(|| {
             let home = std::env::var("USERPROFILE")
                 .or_else(|_| std::env::var("HOME"))
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home)
         });
-        data_dir.join(".kiro-account-manager").join("accounts.json")
+        data_dir.join(".kirohub").join("accounts.json")
     }
 
-    fn load_from_file(path: &PathBuf) -> Vec<Account> {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            match serde_json::from_str::<Vec<Account>>(&content) {
-                Ok(accounts) => {
-                    eprintln!("[AccountStore] 成功加载 {} 个账号", accounts.len());
-                    accounts
-                }
-                Err(e) => {
-                    eprintln!("[AccountStore] JSON 反序列化失败: {e}");
-                    eprintln!("[AccountStore] 文件路径: {}", path.display());
-                    Vec::new()
+    fn load_legacy_json() -> Option<Vec<Account>> {
+        let content = std::fs::read_to_string(Self::legacy_json_path()).ok()?;
+        match serde_json::from_str::<Vec<Account>>(&content) {
+            Ok(accounts) if !accounts.is_empty() => Some(accounts),
+            _ => None,
+        }
+    }
+
+    fn backup_legacy_json() {
+        let path = Self::legacy_json_path();
+        let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+    }
+
+    /// 异步加载：把同步的 SQLite 查询放到阻塞线程池，避免阻塞 async 运行时。
+    fn load_from_db() -> Vec<Account> {
+        let conn = match crate::db::pool().get() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[AccountStore] 获取数据库连接失败: {e}");
+                return Vec::new();
+            }
+        };
+        let mut stmt = match conn.prepare("SELECT data FROM accounts ORDER BY position, added_at") {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[AccountStore] 查询账号失败: {e}");
+                return Vec::new();
+            }
+        };
+        let mut accounts = Vec::new();
+        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+            for data in rows.flatten() {
+                match serde_json::from_str::<Account>(&data) {
+                    Ok(a) => accounts.push(a),
+                    Err(e) => eprintln!("[AccountStore] 账号反序列化失败: {e}"),
                 }
             }
-        } else {
-            eprintln!("[AccountStore] 无法读取文件: {}", path.display());
-            Vec::new()
         }
+        // 仅在账号数量变化时打印一次，避免每次重载/每个网关请求重复刷屏
+        let count = accounts.len() as i64;
+        static LAST_LOGGED_COUNT: std::sync::atomic::AtomicI64 =
+            std::sync::atomic::AtomicI64::new(-1);
+        if LAST_LOGGED_COUNT.swap(count, std::sync::atomic::Ordering::Relaxed) != count {
+            eprintln!("[AccountStore] 从 SQLite 加载 {count} 个账号");
+        }
+        accounts
     }
 
     pub fn save_to_file(&self) -> bool {
         self.try_save_to_file().is_ok()
     }
 
+    /// 将内存中的账号整体写回 SQLite（事务内清空后批量插入，保证原子性）。
     pub fn try_save_to_file(&self) -> Result<(), String> {
-        if let Some(parent) = self.file_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("[AccountStore] 创建目录失败: {e}");
-                return Err(format!("创建账号目录失败: {e}"));
+        let mut conn = crate::db::pool()
+            .get()
+            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+        tx.execute("DELETE FROM accounts", [])
+            .map_err(|e| format!("清空账号表失败: {e}"))?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO accounts(id,email,user_id,label,status,group_id,enabled,added_at,position,data) \
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                )
+                .map_err(|e| format!("准备插入失败: {e}"))?;
+            for (i, a) in self.accounts.iter().enumerate() {
+                let data = serde_json::to_string(a).map_err(|e| format!("序列化账号失败: {e}"))?;
+                stmt.execute(rusqlite::params![
+                    a.id,
+                    a.email,
+                    a.user_id,
+                    a.label,
+                    a.status,
+                    a.group_id,
+                    a.enabled as i64,
+                    a.added_at,
+                    i as i64,
+                    data,
+                ])
+                .map_err(|e| format!("写入账号失败: {e}"))?;
             }
         }
-
-        match serde_json::to_string_pretty(&self.accounts) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&self.file_path, json) {
-                    eprintln!("[AccountStore] 写入文件失败: {e}");
-                    return Err(format!("写入账号文件失败: {e}"));
+        // 同步关联表（DELETE accounts 已级联清空 account_tag_links）。
+        // OR IGNORE/忽略单行错误以容忍标签尚未保存的极端情况；权威数据仍在 accounts.data JSON。
+        {
+            let mut link = tx
+                .prepare(
+                    "INSERT OR IGNORE INTO account_tag_links(account_id,tag_id,tag_name,linked_at) \
+                     VALUES(?1,?2,?3,?4)",
+                )
+                .map_err(|e| format!("准备标签关联插入失败: {e}"))?;
+            for a in &self.accounts {
+                for l in &a.tag_links {
+                    let _ = link.execute(rusqlite::params![a.id, l.tag_id, l.tag_name, l.linked_at]);
                 }
-                Ok(())
-            }
-            Err(e) => {
-                eprintln!("[AccountStore] 序列化失败: {e}");
-                Err(format!("序列化账号数据失败: {e}"))
             }
         }
+        tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+        Ok(())
     }
 
     pub fn get_all(&self) -> Vec<Account> {
         self.accounts.clone()
     }
 
+    /// 仅更新单个账号行（UPSERT），避免整表覆盖造成的跨实例 last-writer-wins。
+    /// 用于网关等高频单账号写入路径（保留其它账号行不受影响）。
+    pub fn update_one(&self, account: &Account) -> Result<(), String> {
+        let conn = crate::db::pool()
+            .get()
+            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let data = serde_json::to_string(account).map_err(|e| format!("序列化账号失败: {e}"))?;
+        conn.execute(
+            "INSERT INTO accounts(id,email,user_id,label,status,group_id,enabled,added_at,position,data) \
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,COALESCE((SELECT position FROM accounts WHERE id=?1),0),?9) \
+             ON CONFLICT(id) DO UPDATE SET email=excluded.email,user_id=excluded.user_id,label=excluded.label,\
+             status=excluded.status,group_id=excluded.group_id,enabled=excluded.enabled,\
+             added_at=excluded.added_at,data=excluded.data",
+            rusqlite::params![
+                account.id,
+                account.email,
+                account.user_id,
+                account.label,
+                account.status,
+                account.group_id,
+                account.enabled as i64,
+                account.added_at,
+                data,
+            ],
+        )
+        .map(|_| ())
+        .map_err(|e| format!("更新账号失败: {e}"))
+    }
+
     pub fn reload(&mut self) {
-        self.accounts = Self::load_from_file(&self.file_path);
+        self.accounts = Self::load_from_db();
+        self.normalize_in_place();
+    }
+
+    /// 异步重载：在阻塞线程池里读 SQLite，避免阻塞 async 运行时。
+    pub async fn reload_async(&mut self) {
+        self.accounts = tokio::task::spawn_blocking(Self::load_from_db)
+            .await
+            .unwrap_or_default();
         self.normalize_in_place();
     }
 
@@ -630,56 +737,116 @@ pub struct GroupTagData {
 
 pub struct GroupTagStore {
     data: GroupTagData,
-    file_path: PathBuf,
 }
 
 impl GroupTagStore {
     pub fn new() -> Self {
-        let file_path = Self::get_storage_path();
-        let data = Self::load_from_file(&file_path);
-        Self { data, file_path }
+        let data = Self::load_from_db();
+
+        // 一次性 JSON -> SQLite 迁移：DB 为空且存在旧 groups-tags.json 时导入并备份
+        if data.groups.is_empty() && data.tags.is_empty() {
+            if let Some(legacy) = Self::load_legacy_json() {
+                let store = Self { data: legacy };
+                if store.try_save_to_file().is_ok() {
+                    Self::backup_legacy_json();
+                    eprintln!("[GroupTagStore] 已从 groups-tags.json 迁移到 SQLite");
+                }
+                return store;
+            }
+        }
+
+        Self { data }
     }
 
-    fn get_storage_path() -> PathBuf {
+    fn legacy_json_path() -> PathBuf {
         let data_dir = dirs::data_dir().unwrap_or_else(|| {
             let home = std::env::var("USERPROFILE")
                 .or_else(|_| std::env::var("HOME"))
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home)
         });
-        data_dir
-            .join(".kiro-account-manager")
-            .join("groups-tags.json")
+        data_dir.join(".kirohub").join("groups-tags.json")
     }
 
-    fn load_from_file(path: &PathBuf) -> GroupTagData {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            serde_json::from_str(&content).unwrap_or_default()
+    fn load_legacy_json() -> Option<GroupTagData> {
+        let content = std::fs::read_to_string(Self::legacy_json_path()).ok()?;
+        let data: GroupTagData = serde_json::from_str(&content).ok()?;
+        if data.groups.is_empty() && data.tags.is_empty() {
+            None
         } else {
-            GroupTagData::default()
+            Some(data)
         }
     }
 
+    fn backup_legacy_json() {
+        let path = Self::legacy_json_path();
+        let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+    }
+
+    fn load_from_db() -> GroupTagData {
+        let conn = match crate::db::pool().get() {
+            Ok(c) => c,
+            Err(_) => return GroupTagData::default(),
+        };
+        let mut data = GroupTagData::default();
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT id,name,color,\"order\",created_at FROM account_groups ORDER BY \"order\"")
+        {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok(AccountGroup {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    color: r.get(2)?,
+                    order: r.get(3)?,
+                    created_at: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                })
+            }) {
+                data.groups = rows.flatten().collect();
+            }
+        }
+        if let Ok(mut stmt) = conn.prepare("SELECT id,name,color,created_at FROM account_tags") {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok(AccountTag {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    color: r.get(2)?,
+                    created_at: r.get::<_, Option<String>>(3)?,
+                })
+            }) {
+                data.tags = rows.flatten().collect();
+            }
+        }
+        data
+    }
+
+    /// 将分组与标签整体写回 SQLite（事务内清空后批量插入）。
     pub fn try_save_to_file(&self) -> Result<(), String> {
-        if let Some(parent) = self.file_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("[GroupTagStore] 创建目录失败: {e}");
-                return Err(format!("创建分组标签目录失败: {e}"));
+        let mut conn = crate::db::pool()
+            .get()
+            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+        tx.execute("DELETE FROM account_groups", [])
+            .map_err(|e| format!("清空分组失败: {e}"))?;
+        tx.execute("DELETE FROM account_tags", [])
+            .map_err(|e| format!("清空标签失败: {e}"))?;
+        {
+            let mut g = tx
+                .prepare("INSERT INTO account_groups(id,name,color,\"order\",created_at) VALUES(?1,?2,?3,?4,?5)")
+                .map_err(|e| format!("准备分组插入失败: {e}"))?;
+            for grp in &self.data.groups {
+                g.execute(rusqlite::params![grp.id, grp.name, grp.color, grp.order, grp.created_at])
+                    .map_err(|e| format!("写入分组失败: {e}"))?;
+            }
+            let mut t = tx
+                .prepare("INSERT INTO account_tags(id,name,color,created_at) VALUES(?1,?2,?3,?4)")
+                .map_err(|e| format!("准备标签插入失败: {e}"))?;
+            for tag in &self.data.tags {
+                t.execute(rusqlite::params![tag.id, tag.name, tag.color, tag.created_at])
+                    .map_err(|e| format!("写入标签失败: {e}"))?;
             }
         }
-        match serde_json::to_string_pretty(&self.data) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&self.file_path, json) {
-                    eprintln!("[GroupTagStore] 写入文件失败: {e}");
-                    return Err(format!("写入分组标签文件失败: {e}"));
-                }
-                Ok(())
-            }
-            Err(e) => {
-                eprintln!("[GroupTagStore] 序列化失败: {e}");
-                Err(format!("序列化分组标签数据失败: {e}"))
-            }
-        }
+        tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+        Ok(())
     }
 
     // 分组操作

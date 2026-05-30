@@ -1,12 +1,13 @@
 // 分组与标签 API 调用
 import { invoke } from '@tauri-apps/api/core'
+import type { TagDefinition, GroupDefinition } from '../types/account'
 
 // ============================================================
 // 分组操作
 // ============================================================
 
 export async function getGroups() {
-  return await invoke('get_groups')
+  return await invoke<GroupDefinition[]>('get_groups')
 }
 
 export async function addGroup(name, color = null) {
@@ -30,7 +31,7 @@ export async function reorderGroups(ids) {
 // ============================================================
 
 export async function getTags() {
-  return await invoke('get_tags')
+  return await invoke<TagDefinition[]>('get_tags')
 }
 
 export async function addTag(name, color) {

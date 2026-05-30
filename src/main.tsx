@@ -38,14 +38,11 @@ ReactDOM.createRoot(rootElement).render(
     <AppSettingsProvider>
       <ThemeProvider
         attribute="data-theme"
-        defaultTheme="dark"
+        defaultTheme="light"
+        forcedTheme="light"
         enableSystem={false}
         disableTransitionOnChange
-        themes={[
-          'light', 'dark', 'dark-one', 'tech', 'midnight', 
-          'purple', 'green', 'business', 'sunset', 'ocean', 
-          'forest', 'rose', 'aurora', 'sakura'
-        ]}
+        themes={['light']}
       >
         <TooltipProvider>
           <DialogProvider>

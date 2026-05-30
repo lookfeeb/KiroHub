@@ -1,6 +1,37 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export async function applyMachineGuid(account, settings = {}) {
+interface AppSettingsLike {
+  autoChangeMachineId?: boolean
+  bindMachineIdToAccount?: boolean
+}
+
+interface SwitchAccount {
+  id?: string
+  machineId?: string
+  accessToken?: string
+  refreshToken?: string
+  provider?: string
+  clientIdHash?: string
+  region?: string
+  clientId?: string
+  clientSecret?: string
+  startUrl?: string
+  profileArn?: string
+}
+
+interface SwitchParams {
+  accessToken?: string
+  refreshToken?: string
+  provider: string
+  authMethod: string
+  region?: string
+  clientId?: string
+  clientSecret?: string
+  startUrl?: string
+  profileArn?: string
+}
+
+export async function applyMachineGuid(account: SwitchAccount, settings: AppSettingsLike = {}) {
   const autoChangeMachineId = settings.autoChangeMachineId !== false
   const bindMachineIdToAccount = settings.bindMachineIdToAccount !== false
 
@@ -33,16 +64,16 @@ export async function applyMachineGuid(account, settings = {}) {
   return account
 }
 
-async function setCustomMachineGuid(account, machineId) {
+async function setCustomMachineGuid(account: SwitchAccount, machineId: string) {
   await invoke('set_custom_machine_guid', { newGuid: machineId })
   return { ...account, machineId }
 }
 
-export function buildSwitchParams(account) {
+export function buildSwitchParams(account: SwitchAccount): SwitchParams {
   const isIdC = account.provider === 'BuilderId' || account.provider === 'Enterprise' || account.clientIdHash
   const authMethod = isIdC ? 'IdC' : 'social'
 
-  const params = {
+  const params: SwitchParams = {
     accessToken: account.accessToken,
     refreshToken: account.refreshToken,
     provider: account.provider || 'Google',

@@ -10,9 +10,9 @@ import React from 'react'
 
 // 根据容器宽度计算列数
 function getColumnCount(width: number) {
-  if (width >= 1280) return 4
-  if (width >= 1024) return 3
-  if (width >= 768) return 2
+  if (width >= 1024) return 4
+  if (width >= 768) return 3
+  if (width >= 520) return 2
   return 1
 }
 
@@ -27,6 +27,7 @@ const VirtualRow = memo(function VirtualRow({
   onSwitch,
   onRefresh,
   onRefreshToken,
+  onRefreshAll,
   onEdit,
   onEditLabel,
   onToggleEnabled,
@@ -35,6 +36,7 @@ const VirtualRow = memo(function VirtualRow({
   onDeleteRemote,
   onAdd,
   localToken,
+  cliToken,
   tagDefinitions,
   groupDefinitions,
   accountRowStateById,
@@ -58,6 +60,7 @@ const VirtualRow = memo(function VirtualRow({
             onSwitch={onSwitch}
             onRefresh={onRefresh}
             onRefreshToken={onRefreshToken}
+            onRefreshAll={onRefreshAll}
             onEdit={onEdit}
             onEditLabel={onEditLabel}
             onToggleEnabled={onToggleEnabled}
@@ -68,6 +71,7 @@ const VirtualRow = memo(function VirtualRow({
             isSwitching={Boolean(accountRowStateById?.[item.id]?.isSwitching)}
             isTogglingOverage={Boolean(accountRowStateById?.[item.id]?.isTogglingOverage)}
             isCurrentAccount={localToken?.refreshToken && item.refreshToken === localToken.refreshToken}
+            isCliCurrent={!!cliToken && item.id === cliToken}
             tagDefinitions={tagDefinitions}
             groupDefinitions={groupDefinitions}
             availableModels={accountRowStateById?.[item.id]?.availableModels ?? null}
@@ -84,6 +88,7 @@ const VirtualRow = memo(function VirtualRow({
   if (prev.row !== next.row || prev.columns !== next.columns) return false
   if (prev.copiedId !== next.copiedId) return false
   if (prev.localToken !== next.localToken) return false
+  if (prev.cliToken !== next.cliToken) return false
   if (prev.tagDefinitions !== next.tagDefinitions) return false
   if (prev.groupDefinitions !== next.groupDefinitions) return false
   if (prev.accountRowStateById !== next.accountRowStateById) return false
@@ -108,6 +113,7 @@ function AccountTable({
   onSwitch,
   onRefresh,
   onRefreshToken,
+  onRefreshAll,
   onEdit,
   onEditLabel,
   onToggleEnabled,
@@ -116,6 +122,7 @@ function AccountTable({
   onDeleteRemote,
   onAdd,
   localToken,
+  cliToken,
   tagDefinitions = [],
   groupDefinitions = [],
   accountRowStateById = {},
@@ -253,6 +260,7 @@ function AccountTable({
                     onSwitch={onSwitch}
                     onRefresh={onRefresh}
                     onRefreshToken={onRefreshToken}
+                    onRefreshAll={onRefreshAll}
                     onEdit={onEdit}
                     onEditLabel={onEditLabel}
                     onToggleEnabled={onToggleEnabled}
@@ -261,6 +269,7 @@ function AccountTable({
                     onDeleteRemote={onDeleteRemote}
                     onAdd={onAdd}
                     localToken={localToken}
+                    cliToken={cliToken}
                     tagDefinitions={tagDefinitions}
                     groupDefinitions={groupDefinitions}
                     accountRowStateById={accountRowStateById}

@@ -19,7 +19,7 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
-    port: 1420,
+    port: 7410,
     strictPort: true,
     // 优化开发服务器性能
     hmr: {

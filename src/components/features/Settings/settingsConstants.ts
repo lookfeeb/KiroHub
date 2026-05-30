@@ -21,19 +21,3 @@ export const NOTIFICATION_SETTINGS_FIELD_MAP = {
   'kiroAgent.notifications.billing': 'notifyBilling'
 }
 
-export const buildThemeOptions = (t) => [
-  { key: 'light', name: t('settings.light') || 'Light', iconName: 'Sun', color: 'from-blue-400 to-blue-600' },
-  { key: 'dark', name: t('settings.dark') || 'Dark', iconName: 'Moon', color: 'from-gray-700 to-gray-900' },
-  { key: 'purple', name: t('settings.purple') || 'Purple', iconName: 'Palette', color: 'from-purple-500 to-purple-700' },
-  { key: 'green', name: t('settings.green') || 'Green', iconName: 'Palette', color: 'from-emerald-500 to-emerald-700' },
-  { key: 'tech', name: t('settings.tech') || 'Tech Blue', iconName: 'Palette', color: 'from-blue-500 to-cyan-500' },
-  { key: 'dark-one', name: t('settings.darkOne') || 'Dark One', iconName: 'Moon', color: 'from-slate-700 to-gray-900' },
-  { key: 'business', name: t('settings.business') || 'Business', iconName: 'Palette', color: 'from-amber-500 to-yellow-600' },
-  { key: 'sunset', name: t('settings.sunset') || 'Sunset', iconName: 'Palette', color: 'from-orange-400 to-red-500' },
-  { key: 'ocean', name: t('settings.ocean') || 'Ocean', iconName: 'Palette', color: 'from-cyan-400 to-blue-500' },
-  { key: 'rose', name: t('settings.rose') || 'Rose', iconName: 'Palette', color: 'from-pink-400 to-rose-500' },
-  { key: 'aurora', name: t('settings.aurora') || 'Aurora', iconName: 'Palette', color: 'from-teal-400 to-emerald-500' },
-  { key: 'midnight', name: t('settings.midnight') || 'Midnight', iconName: 'Moon', color: 'from-gray-900 via-yellow-700 to-black' },
-  { key: 'forest', name: t('settings.forest') || 'Forest', iconName: 'Palette', color: 'from-green-600 to-emerald-900' },
-  { key: 'sakura', name: t('settings.sakura') || 'Sakura', iconName: 'Palette', color: 'from-pink-200 to-rose-400' },
-]

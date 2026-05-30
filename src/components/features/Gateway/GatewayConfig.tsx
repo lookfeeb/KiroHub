@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useState } from 'react'
-import { RotateCw, TrendingUp, Shuffle, Zap } from 'lucide-react'
+import { RotateCw, TrendingUp, Shuffle, Zap, Network, KeyRound, Filter, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,6 +25,26 @@ interface GatewayConfigProps {
   handleAutoStartToggle: (checked: boolean) => Promise<void>;
   onShowClientConfig?: () => void;
   hasConfiguredClients?: boolean;
+}
+
+const SECTION_ACCENT: Record<string, string> = {
+  blue: 'from-blue-500 to-blue-400 bg-blue-500/15 text-blue-500',
+  violet: 'from-violet-500 to-violet-400 bg-violet-500/15 text-violet-500',
+  amber: 'from-amber-500 to-amber-400 bg-amber-500/15 text-amber-500',
+  emerald: 'from-emerald-500 to-emerald-400 bg-emerald-500/15 text-emerald-500',
+}
+
+function SectionHeading({ icon, title, accent }: { icon: React.ReactNode; title: string; accent: keyof typeof SECTION_ACCENT }) {
+  const cls = SECTION_ACCENT[accent]
+  const grad = cls.split(' ').slice(0, 2).join(' ')
+  const badge = cls.split(' ').slice(2).join(' ')
+  return (
+    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+      <div className={`w-1 h-4 rounded-full bg-gradient-to-b ${grad}`} />
+      <span className={`flex h-6 w-6 items-center justify-center rounded-lg ${badge}`}>{icon}</span>
+      <span className="text-sm font-semibold text-foreground">{title}</span>
+    </div>
+  )
 }
 
 function GatewayConfig({
@@ -52,21 +72,18 @@ function GatewayConfig({
           <div className="flex flex-col gap-4">
             {/* Section 1: 网络与路由 */}
             <div className="space-y-3">
-              <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full"></div>
-                网络与路由
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="flex flex-col gap-1.5">
+              <SectionHeading icon={<Network size={13} />} title="网络与路由" accent="blue" />
+              <div className="flex flex-wrap items-stretch gap-3">
+                <div className="flex flex-col justify-center gap-1.5 p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label>监听地址</Label>
                   <Input
                     value={config.host}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setField('host', e.target.value || '127.0.0.1')}
-                    className={fieldErrors.host ? 'border-red-500' : ''}
+                    className={`max-w-[180px] ${fieldErrors.host ? 'border-red-500' : ''}`}
                   />
                   {fieldErrors.host && <div className="text-xs text-red-500">{fieldErrors.host}</div>}
                 </div>
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col justify-center gap-1.5 p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label>端口</Label>
                   <Input
                     type="number"
@@ -74,11 +91,11 @@ function GatewayConfig({
                     min={1}
                     max={65535}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setField('port', Number(e.target.value) || 8765)}
-                    className={fieldErrors.port ? 'border-red-500' : ''}
+                    className={`max-w-[110px] ${fieldErrors.port ? 'border-red-500' : ''}`}
                   />
                   {fieldErrors.port && <div className="text-xs text-red-500">{fieldErrors.port}</div>}
                 </div>
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col justify-center gap-1.5 p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label>Region</Label>
                   <Select value={config.region} onValueChange={(v: string) => setField('region', v || 'us-east-1')}>
                     <SelectTrigger className={fieldErrors.region ? 'border-red-500' : ''}>
@@ -125,9 +142,7 @@ function GatewayConfig({
                   </Select>
                   {fieldErrors.region && <div className="text-xs text-red-500">{fieldErrors.region}</div>}
                 </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30">
+                <div className="w-[200px] flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <div className="flex flex-col gap-0.5">
                     <Label className="text-sm">多账号轮询</Label>
                     <span className="text-xs text-muted-foreground">
@@ -140,10 +155,10 @@ function GatewayConfig({
                   />
                 </div>
                 {(config.accountMode === 'pool' || config.accountMode === 'group') ? (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex-1 min-w-[280px] flex flex-col justify-center gap-1.5 p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                     <Label>路由策略</Label>
                     <Select value={config.strategy} onValueChange={(v: string) => setField('strategy', v || 'round_robin')}>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -154,13 +169,13 @@ function GatewayConfig({
                     </Select>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex-1 min-w-[280px] flex flex-col justify-center gap-1.5 p-3 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                     <Label>指定账号</Label>
                     <Select value={config.accountId} onValueChange={(v: string) => setField('accountId', v)}>
-                      <SelectTrigger className={fieldErrors.accountId ? 'border-red-500' : ''}>
+                      <SelectTrigger className={`w-full ${fieldErrors.accountId ? 'border-red-500' : ''}`}>
                         <SelectValue placeholder="选择一个账号" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent position="popper">
                         {accountOptions.map((opt: any) => (
                           <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                         ))}
@@ -174,12 +189,9 @@ function GatewayConfig({
 
             {/* Section 2: 客户端认证与模型 */}
             <div className="space-y-3">
-              <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full"></div>
-                客户端认证与模型
-              </div>
+              <SectionHeading icon={<KeyRound size={13} />} title="客户端认证与模型" accent="violet" />
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
+                <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20 transition-colors hover:border-primary/40">
                   <div className="text-sm text-muted-foreground">
                     {(() => {
                       const rawKeys = (config.clientApiKeysText || '').split(/[\n,]+/).map((k: string) => k.trim()).filter(Boolean)
@@ -193,7 +205,7 @@ function GatewayConfig({
                     管理 Keys
                   </Button>
                 </div>
-                <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
+                <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20 transition-colors hover:border-primary/40">
                   <div className="text-sm text-muted-foreground">
                     {config.modelMappings?.length > 0
                       ? `${config.modelMappings.length} 条映射规则，${config.modelMappings.filter((r: any) => r.enabled).length} 条启用`
@@ -205,7 +217,7 @@ function GatewayConfig({
                   </Button>
                 </div>
                 {onShowClientConfig && (
-                  <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
+                  <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20 transition-colors hover:border-primary/40">
                     <div className="text-sm text-muted-foreground">
                       {hasConfiguredClients ? '✓ 已配置客户端' : '写入客户端配置'}
                     </div>
@@ -226,25 +238,22 @@ function GatewayConfig({
 
             {/* Section 3: 提示词过滤 */}
             <div className="space-y-3">
-              <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full"></div>
-                提示词过滤
-              </div>
+              <SectionHeading icon={<Filter size={13} />} title="提示词过滤" accent="amber" />
               <div className="grid grid-cols-3 gap-2">
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">精简CC提示</Label>
                   <Switch checked={!!config.filterClaudeCode} onCheckedChange={(checked: boolean) => setField('filterClaudeCode', checked)} />
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">去边界标记</Label>
                   <Switch checked={!!config.filterStripBoundaries} onCheckedChange={(checked: boolean) => setField('filterStripBoundaries', checked)} />
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">去环境噪音</Label>
                   <Switch checked={!!config.filterEnvNoise} onCheckedChange={(checked: boolean) => setField('filterEnvNoise', checked)} />
                 </div>
               </div>
-              <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
+              <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20 transition-colors hover:border-primary/40">
                 <div className="text-sm text-muted-foreground">
                   {config.promptFilterRules?.length > 0
                     ? `${config.promptFilterRules.length} 条自定义规则，${config.promptFilterRules.filter((r: any) => r.enabled).length} 条启用`
@@ -258,12 +267,9 @@ function GatewayConfig({
 
             {/* Section 4: 安全与高级 */}
             <div className="space-y-3">
-              <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full"></div>
-                安全与高级
-              </div>
-              <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+              <SectionHeading icon={<ShieldCheck size={13} />} title="安全与高级" accent="emerald" />
+              <div className="grid grid-cols-5 gap-2">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">仅本机</Label>
                   <Switch
                     checked={!!config.localOnly}
@@ -272,15 +278,15 @@ function GatewayConfig({
                     }}
                   />
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">自动启动</Label>
                   <Switch checked={!!config.enabled} onCheckedChange={handleAutoStartToggle} />
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-sm">响应缓存</Label>
                   <Switch checked={!!config.responseCacheEnabled} onCheckedChange={(checked: boolean) => setField('responseCacheEnabled', checked)} />
                 </div>
-                <div className="flex flex-col gap-0.5 p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex flex-col gap-0.5 p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-xs text-muted-foreground">缓存TTL(秒)</Label>
                   <Input
                     type="number"
@@ -292,7 +298,7 @@ function GatewayConfig({
                     disabled={!config.responseCacheEnabled}
                   />
                 </div>
-                <div className="flex flex-col gap-0.5 p-2.5 rounded-lg border border-border bg-muted/30">
+                <div className="flex flex-col gap-0.5 p-2.5 rounded-lg border border-border bg-muted/30 transition-colors hover:border-primary/40">
                   <Label className="text-xs text-muted-foreground">阈值%</Label>
                   <Input
                     type="number"

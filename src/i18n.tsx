@@ -4,21 +4,17 @@ import { initReactI18next, I18nextProvider } from 'react-i18next'
 
 // 从 JSON 文件导入翻译
 import zhCN from '../locales/zh-CN.json'
-import en from '../locales/en.json'
-import ru from '../locales/ru.json'
 
-// 初始化 i18n（支持中文、英文、俄文）
+// 初始化 i18n（仅中文）
 i18n
   .use(initReactI18next)
   .init({
-    lng: localStorage.getItem('app-language') || 'zh-CN',
+    lng: 'zh-CN',
     fallbackLng: 'zh-CN',
-    supportedLngs: ['zh-CN', 'en', 'ru'],
+    supportedLngs: ['zh-CN'],
 
     resources: {
-      'zh-CN': { translation: zhCN },
-      'en': { translation: en },
-      'ru': { translation: ru }
+      'zh-CN': { translation: zhCN }
     },
 
     interpolation: {

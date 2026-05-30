@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Users, Zap, Shield, TrendingUp, Sparkles, Server, RefreshCw, ArrowRightLeft, Terminal } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { Users, Zap, Shield, TrendingUp, Sparkles, Server, RefreshCw, Terminal, Clock, CreditCard, User, KeyRound, Database, Folder } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
 import { useAccount } from '../../../contexts/AccountContext'
 import { usePrivacy } from '../../../contexts/PrivacyContext'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
-import { getQuota, getUsed, getSubPlan } from '../../../utils/accountStats'
+import { getSubPlan, getMergedQuota, formatUsage } from '../../../utils/accountStats'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // 子组件
 import LoadingSkeleton from './LoadingSkeleton'
 import StatCard from './StatCard'
+import McpToolsModal from './McpToolsModal'
+import CliCommandPreview from '../Settings/CliCommandPreview'
 
 interface HomeProps {
   onNavigate: (path: string) => void;
@@ -41,6 +43,7 @@ function Home({ onNavigate }: HomeProps) {
   
   const [refreshingAccount, setRefreshingAccount] = useState(false)
   const [mcpToolCount, setMcpToolCount] = useState(0)
+  const [mcpModalOpen, setMcpModalOpen] = useState(false)
   const [ideInstallInfo, setIdeInstallInfo] = useState<any>(null)
 
   const handleRefresh = useCallback(() => refresh(), [refresh])
@@ -131,7 +134,7 @@ function Home({ onNavigate }: HomeProps) {
       value: mcpToolCount, 
       label: 'MCP 工具', 
       delay: 'delay-500',
-      onClick: () => onNavigate?.('kiroConfig'),
+      onClick: () => setMcpModalOpen(true),
       warning: mcpToolCount > 50
     },
   ], [accent, stats, mcpToolCount, t, onNavigate])
@@ -162,11 +165,13 @@ function Home({ onNavigate }: HomeProps) {
         </div>
 
         {/* 主卡片：当前账号 | CLI 账号 */}
-        <Card className="card-glow animate-scale-in delay-300">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+        <Card className="card-glow animate-scale-in delay-300 overflow-hidden">
+          <div className={`flex items-center justify-between px-4 py-2.5 border-b border-border bg-gradient-to-r ${accent.gradientFrom}/10 ${accent.gradientTo}/5`}>
             <div className="flex items-center gap-2">
-              <Sparkles size={14} className={accent.text} />
-              <span className="text-sm font-semibold text-foreground">Kiro 账号</span>
+              <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo} flex items-center justify-center shadow-sm ring-1 ring-primary/20`}>
+                <Sparkles size={12} className="text-white" />
+              </div>
+              <span className="text-sm font-semibold text-foreground tracking-wide">Kiro 账号</span>
             </div>
             <TooltipProvider>
               <Tooltip>
@@ -190,7 +195,8 @@ function Home({ onNavigate }: HomeProps) {
             <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr]">
               {/* 左：当前 IDE 账号 */}
               <div className="p-4 flex flex-col gap-3">
-                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
+                  <span className={`w-1.5 h-1.5 rounded-full ${accent.text.replace('text-', 'bg-')}`} />
                   当前 IDE 账号
                 </span>
                 {currentAccount ? (
@@ -216,6 +222,7 @@ function Home({ onNavigate }: HomeProps) {
               {/* 右：CLI 账号 */}
               <div className="p-4 flex flex-col gap-3 bg-muted/20 border-t md:border-t-0 md:border-l border-border">
                 <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   <Terminal size={11} />
                   当前 CLI 账号
                 </span>
@@ -241,17 +248,11 @@ function Home({ onNavigate }: HomeProps) {
               </div>
             </div>
 
-            {/* 底部跳转 */}
-            <button
-              onClick={() => onNavigate?.('accounts')}
-              className="w-full py-2.5 flex items-center justify-center gap-2 border-t border-border bg-primary/5 hover:bg-primary/10 text-primary text-sm font-medium transition-colors"
-            >
-              <ArrowRightLeft size={13} />
-              查看全部账号
-            </button>
           </CardContent>
         </Card>
       </div>
+
+      <McpToolsModal open={mcpModalOpen} onClose={() => setMcpModalOpen(false)} />
     </div>
   )
 }
@@ -292,11 +293,14 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
   const truncate = (s: string, len = 16) => s ? (s.length > len ? s.substring(0, len) + '...' : s) : '-'
 
   return (
-    <div className="flex-1 flex flex-col gap-3">
+    <div className="flex-1 flex flex-col gap-2.5">
       {/* 状态 */}
-      <div className="flex items-center gap-2 bg-muted/30 border border-border rounded-xl p-3">
-        <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold text-sm shrink-0">
-          C
+      <div className="flex items-center gap-2.5 rounded-xl p-3 bg-gradient-to-br from-muted/40 to-muted/10 border border-border/60 hover:border-emerald-500/40 transition-all">
+        <div className="relative shrink-0">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg ring-1 ring-white/10">
+            <Terminal size={16} />
+          </div>
+          <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background ${isExpired ? 'bg-red-500' : 'bg-green-500'}`} />
         </div>
         <div className="flex flex-col min-w-0 flex-1">
           <span className="text-sm font-semibold text-foreground">{authMethod}</span>
@@ -308,45 +312,40 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
       </div>
 
       {/* Token 信息 */}
-      <div className="bg-muted/30 border border-border rounded-xl p-3">
-        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider mb-2 block">Token</span>
+      <Panel>
+        <PanelTitle icon={KeyRound}>Token</PanelTitle>
         <div className="flex flex-col gap-1.5">
           <InfoRow label="Access Token" value={truncate(tokenData.access_token, 20)} mono />
           <InfoRow label="Refresh Token" value={truncate(tokenData.refresh_token, 20)} mono />
           <InfoRow label="过期时间" value={expiresStr} valueClass={isExpired ? 'text-red-500' : 'text-green-500'} />
           <InfoRow label="Region" value={tokenData.region || 'us-east-1'} mono />
-          {tokenData.start_url && (
-            <InfoRow label="Start URL" value={truncate(tokenData.start_url, 24)} mono />
-          )}
-          {tokenData.oauth_flow && (
-            <InfoRow label="OAuth Flow" value={tokenData.oauth_flow} />
-          )}
-          {tokenData.scopes && tokenData.scopes.length > 0 && (
-            <InfoRow label="Scopes" value={`${tokenData.scopes.length} 个`} />
-          )}
+          {tokenData.start_url && <InfoRow label="Start URL" value={truncate(tokenData.start_url, 24)} mono />}
+          {tokenData.oauth_flow && <InfoRow label="OAuth Flow" value={tokenData.oauth_flow} />}
+          {tokenData.scopes && tokenData.scopes.length > 0 && <InfoRow label="Scopes" value={`${tokenData.scopes.length} 个`} />}
         </div>
-      </div>
+      </Panel>
+
+      {/* CLI 启动命令 */}
+      <Panel>
+        <PanelTitle icon={Terminal}>CLI 启动命令</PanelTitle>
+        <CliCommandPreview />
+      </Panel>
 
       {/* Device Registration */}
       {deviceReg && (
-        <div className="bg-muted/30 border border-border rounded-xl p-3">
-          <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider mb-2 block">Device Registration</span>
+        <Panel>
+          <PanelTitle icon={Shield}>Device Registration</PanelTitle>
           <div className="flex flex-col gap-1.5">
             <InfoRow label="Client ID" value={truncate(deviceReg.client_id, 20)} mono />
             <InfoRow label="Client Secret" value={truncate(deviceReg.client_secret, 20)} mono />
             <InfoRow label="Region" value={deviceReg.region || 'us-east-1'} mono />
           </div>
-        </div>
+        </Panel>
       )}
 
       {/* 数据库路径 */}
-      <div className="bg-muted/30 border border-border rounded-xl p-2.5">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground">DB 路径</span>
-          <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[180px]" title={cliPath}>
-            {cliPath.split(/[/\\]/).slice(-2).join('/')}
-          </span>
-        </div>
+      <div className="mt-auto">
+        <PathBar icon={Database} label="DB 路径" value={cliPath.split(/[/\\]/).slice(-2).join('/')} title={cliPath} />
       </div>
     </div>
   )
@@ -359,10 +358,7 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
   maskEmail: (s: string) => string;
   t: any;
 }) {
-  const quota = getQuota(account)
-  const used = getUsed(account)
-  const remaining = Math.max(0, quota - used)
-  const percent = quota > 0 ? Math.round((used / quota) * 100) : 0
+  const { quota, used, remaining, percent, overageEnabled, baseQuota, baseUsed, overageCap: mergedOverageCap, overageUsed } = getMergedQuota(account)
   const plan = getSubPlan(account)
   const email = account.usageData?.userInfo?.email || account.email || ''
   const provider = account.provider || ''
@@ -396,11 +392,11 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
   const currency = breakdown?.currency || ''
   const unit = breakdown?.unit || ''
 
-  const getBarClass = (pct: number) => {
-    if (pct > 100) return 'bg-purple-500'
-    if (pct > 80) return 'bg-red-500'
-    if (pct > 50) return 'bg-amber-500'
-    return 'bg-green-500'
+  const getBarGradient = (pct: number) => {
+    if (pct > 100) return 'from-purple-400 to-fuchsia-500'
+    if (pct > 80) return 'from-red-400 to-rose-500'
+    if (pct > 50) return 'from-amber-400 to-orange-500'
+    return 'from-green-400 to-emerald-500'
   }
 
   const getPercentClass = (pct: number) => {
@@ -426,23 +422,26 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
   const overagePercent = overageCap > 0 ? Math.round((currentOverages / overageCap) * 100) : 0
 
   return (
-    <div className="flex-1 flex flex-col gap-3">
+    <div className="flex-1 flex flex-col gap-2.5">
       {/* 头部：邮箱 + 计划 + Provider */}
-      <div className="flex items-center gap-2 bg-muted/30 border border-border rounded-xl p-3">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0 ${
-          provider === 'Google' ? 'bg-gradient-to-br from-red-500 to-orange-500' :
-          isGitHubProvider(provider) ? 'bg-gradient-to-br from-gray-700 to-gray-900' :
-          `bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo}`
-        }`}>
-          {provider?.[0] || 'K'}
+      <div className="flex items-center gap-2.5 rounded-xl p-3 bg-gradient-to-br from-muted/40 to-muted/10 border border-border/60 hover:border-primary/40 transition-all">
+        <div className="relative shrink-0">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-lg ring-1 ring-white/10 ${
+            provider === 'Google' ? 'bg-gradient-to-br from-red-500 to-orange-500' :
+            isGitHubProvider(provider) ? 'bg-gradient-to-br from-gray-700 to-gray-900' :
+            `bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo}`
+          }`}>
+            {provider?.[0]?.toUpperCase() || 'K'}
+          </div>
+          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 ring-2 ring-background" />
         </div>
         <div className="flex flex-col min-w-0 flex-1">
           <span className="text-sm font-semibold text-foreground truncate">
             {email ? maskEmail(email) : getProviderDisplayName(provider)}
           </span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
             {getProviderDisplayName(provider)}
-            {daysUntilReset != null && ` · ${resetStr}`}
+            {daysUntilReset != null && <><span className="opacity-40">·</span><Clock size={10} className="opacity-70" />{resetStr}</>}
           </span>
         </div>
         {plan && (
@@ -454,92 +453,46 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
       </div>
 
       {/* 总配额进度 */}
-      <div className="bg-muted/30 border border-border rounded-xl p-3">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs font-medium text-foreground">
-            本月用量 ({displayNamePlural})
-          </span>
-          <div className="flex items-center gap-2">
-            <span className={`text-sm font-bold font-mono ${getPercentClass(percent)}`}>{percent}%</span>
-          </div>
+      <Panel>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-foreground">本月用量 ({displayNamePlural})</span>
+          <span className={`text-sm font-bold font-mono ${getPercentClass(percent)}`}>{percent}%</span>
         </div>
-        <div className="h-[5px] bg-muted rounded-full overflow-hidden mb-1.5">
-          <div className={`h-full rounded-full transition-all duration-500 ${getBarClass(percent)}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+        <div className="h-2 bg-muted rounded-full overflow-hidden mb-2 shadow-inner">
+          <div className={`h-full rounded-full bg-gradient-to-r ${getBarGradient(percent)} transition-all duration-700 ease-out`} style={{ width: `${Math.min(percent, 100)}%` }} />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-muted-foreground font-mono">
-            {isOverage ? mainLimitPrecision : mainUsedPrecision} / {mainLimitPrecision} {displayName}
-          </span>
-          {isOverage ? (
-            <span className="text-[11px] font-semibold text-purple-500">超额 {currentOveragesPrecision}</span>
-          ) : (
-            <span className={`text-[11px] font-semibold ${getPercentClass(percent)}`}>剩余 {remaining}</span>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-[11px] text-muted-foreground font-mono cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+                {overageEnabled
+                  ? <>正常 {formatUsage(baseQuota)} / 透支 {formatUsage(mergedOverageCap)} / 总 {formatUsage(quota)}</>
+                  : <>{formatUsage(used)} / {formatUsage(quota)} {displayName}</>}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-[11px] leading-relaxed">
+                <div>正常配额：{formatUsage(baseUsed)} / {formatUsage(baseQuota)}</div>
+                {overageEnabled && <div className="text-purple-300">透支配额：{formatUsage(overageUsed)} / {formatUsage(mergedOverageCap)}</div>}
+                <div>总配额：{formatUsage(used)} / {formatUsage(quota)}（剩余 {formatUsage(remaining)}）</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+          <span className={`text-[11px] font-semibold ${getPercentClass(percent)}`}>剩余 {formatUsage(remaining)}</span>
         </div>
-      </div>
+      </Panel>
 
       {/* 超额详情（仅超额时显示） */}
       {currentOverages > 0 && (
-        <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-3">
-          <span className="text-[10px] font-bold uppercase text-purple-500 tracking-wider mb-2 block">超额详情</span>
+        <div className="rounded-xl p-3 bg-gradient-to-br from-purple-500/10 to-fuchsia-500/5 border border-purple-500/25">
+          <PanelTitle icon={Zap} color="text-purple-500">超额详情</PanelTitle>
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">超额用量</span>
-              <span className="text-[11px] font-mono text-purple-500 font-semibold">{currentOveragesPrecision} / {overageCapPrecision}</span>
-            </div>
-            {/* 超额进度条 */}
+            <InfoRow label="超额用量" value={`${currentOveragesPrecision} / ${overageCapPrecision}`} valueClass="text-purple-500 font-semibold" mono />
             <div className="h-[3px] bg-purple-500/10 rounded-full overflow-hidden">
-              <div className="h-full rounded-full bg-purple-500 transition-all" style={{ width: `${Math.min(overagePercent, 100)}%` }} />
+              <div className="h-full rounded-full bg-gradient-to-r from-purple-400 to-fuchsia-500 transition-all" style={{ width: `${Math.min(overagePercent, 100)}%` }} />
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">超额费用</span>
-              <span className="text-[11px] font-mono text-purple-500 font-semibold">${overageCharges.toFixed(2)} {currency}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">费率</span>
-              <span className="text-[11px] font-mono text-muted-foreground">${overageRate}/{displayName}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 额度明细（基础 + 试用 + 奖励） */}
-      {breakdown && (
-        <div className="bg-muted/30 border border-border rounded-xl p-3">
-          <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider mb-2 block">额度明细</span>
-          <div className="flex flex-col gap-2">
-            {/* 基础配额 */}
-            <QuotaRow label="基础" used={mainUsed} limit={mainLimit} percent={mainPercent} color="blue" accent={accent} />
-
-            {/* 试用配额 */}
-            {freeTrial && freeTrial.freeTrialStatus === 'ACTIVE' && freeTrial.usageLimit > 0 && (
-              <QuotaRow
-                label="试用"
-                used={freeTrial.currentUsage ?? 0}
-                limit={freeTrial.usageLimit}
-                percent={freeTrial.usageLimit > 0 ? Math.round((freeTrial.currentUsage ?? 0) / freeTrial.usageLimit * 100) : 0}
-                color="purple"
-                accent={accent}
-              />
-            )}
-
-            {/* 奖励配额 */}
-            {bonuses.filter((b: any) => {
-              const now = Date.now()
-              const expiry = b.expiresAt ? b.expiresAt * 1000 : Infinity
-              return expiry > now && b.status === 'ACTIVE'
-            }).map((bonus: any, idx: number) => (
-              <QuotaRow
-                key={idx}
-                label={bonus.displayName?.substring(0, 4) || `奖励${idx + 1}`}
-                used={Math.round(bonus.currentUsage ?? 0)}
-                limit={Math.round(bonus.usageLimit ?? 0)}
-                percent={bonus.usageLimit > 0 ? Math.round((bonus.currentUsage ?? 0) / bonus.usageLimit * 100) : 0}
-                color="amber"
-                accent={accent}
-                expiry={bonus.expiresAt}
-              />
-            ))}
+            <InfoRow label="超额费用" value={`$${overageCharges.toFixed(2)} ${currency}`} valueClass="text-purple-500 font-semibold" mono />
+            <InfoRow label="费率" value={`$${overageRate}/${displayName}`} mono />
           </div>
         </div>
       )}
@@ -548,8 +501,8 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
       <div className="grid grid-cols-2 gap-2">
         {/* 订阅信息 */}
         {subInfo && (
-          <div className="bg-muted/30 border border-border rounded-xl p-3">
-            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider mb-2 block">订阅</span>
+          <Panel>
+            <PanelTitle icon={CreditCard}>订阅</PanelTitle>
             <div className="flex flex-col gap-1.5">
               <InfoRow label="类型" value={subInfo.subscriptionTitle || 'Free'} />
               <InfoRow label="计划" value={subInfo.type?.replace('Q_DEVELOPER_STANDALONE_', '') || '-'} mono />
@@ -562,12 +515,12 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
                 <InfoRow label="管理" value={subInfo.subscriptionManagementTarget} mono />
               )}
             </div>
-          </div>
+          </Panel>
         )}
 
         {/* 账号 & 资源信息 */}
-        <div className="bg-muted/30 border border-border rounded-xl p-3">
-          <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider mb-2 block">账号 & 资源</span>
+        <Panel>
+          <PanelTitle icon={User}>账号 & 资源</PanelTitle>
           <div className="flex flex-col gap-1.5">
             <InfoRow label="IDP" value={getProviderDisplayName(provider) || '-'} />
             <InfoRow label="重置日" value={resetDateStr || '-'} />
@@ -590,17 +543,12 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
               <InfoRow label="超额费率" value={`$${overageRate}/${displayName}`} mono />
             )}
           </div>
-        </div>
+        </Panel>
       </div>
 
       {/* IDE Token 路径 */}
-      <div className="bg-muted/30 border border-border rounded-xl p-2.5">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground">Token 路径</span>
-          <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[220px]" title="~/.aws/sso/cache/">
-            .aws/sso/cache/
-          </span>
-        </div>
+      <div className="mt-auto">
+        <PathBar icon={Folder} label="Token 路径" value=".aws/sso/cache/" title="~/.aws/sso/cache/" />
       </div>
     </div>
   )
@@ -638,6 +586,21 @@ function QuotaRow({ label, used, limit, percent, color, accent, expiry }: {
   )
 }
 
+// 区块容器
+function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`rounded-xl border border-border/60 bg-muted/25 p-3 transition-colors hover:border-primary/30 ${className}`}>{children}</div>
+}
+
+// 区块标题
+function PanelTitle({ icon: Icon, children, color = 'text-muted-foreground' }: { icon?: any; children: ReactNode; color?: string }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-2">
+      {Icon && <Icon size={11} className={color} />}
+      <span className={`text-[10px] font-bold uppercase tracking-wider ${color}`}>{children}</span>
+    </div>
+  )
+}
+
 // 信息行
 function InfoRow({ label, value, valueClass, mono }: {
   label: string;
@@ -646,9 +609,26 @@ function InfoRow({ label, value, valueClass, mono }: {
   mono?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-      <span className={`text-[11px] ${valueClass || 'text-foreground'} ${mono ? 'font-mono' : ''} truncate max-w-[100px]`}>{value}</span>
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[11px] text-muted-foreground shrink-0">{label}</span>
+      <span className={`text-[11px] ${valueClass || 'text-foreground'} ${mono ? 'font-mono' : ''} truncate max-w-[110px] text-right`} title={value}>{value}</span>
+    </div>
+  )
+}
+
+// 路径条
+function PathBar({ icon: Icon, label, value, title }: { icon?: any; label: string; value: string; title?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+      <span className="text-xs font-medium text-foreground/70 flex items-center gap-1.5 shrink-0">
+        {Icon && <Icon size={13} className="text-primary" />}{label}
+      </span>
+      <code
+        className="text-xs font-mono text-foreground/90 truncate max-w-[220px]"
+        title={title || value}
+      >
+        {value}
+      </code>
     </div>
   )
 }

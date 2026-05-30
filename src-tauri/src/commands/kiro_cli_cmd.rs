@@ -364,7 +364,10 @@ pub async fn switch_to_cli_account(
     let payload = build_switch_payload(&refreshed_account)?;
 
     // 5. 执行切号写入（包括清除旧 key）
-    crate::kiro::cli::switch_cli_account(&expanded_path, &payload)
+    let backup = crate::kiro::cli::switch_cli_account(&expanded_path, &payload)?;
+    // 6. 记录当前 CLI 账号 id（用于前端标记）
+    let _ = crate::commands::app_settings_cmd::set_current_cli_account_id_inner(&account_id);
+    Ok(backup)
 }
 
 /// 回滚切号操作
@@ -405,7 +408,6 @@ fn build_switch_payload(
     let mut token_data = serde_json::json!({
         "access_token": account.access_token,
         "refresh_token": account.refresh_token,
-        "region": account.region.as_ref().unwrap_or(&"us-east-1".to_string()),
     });
 
     // 总是生成新的 expires_at（当前时间 + 1小时）
@@ -414,6 +416,7 @@ fn build_switch_payload(
 
     // IdC 账号：补齐固定字段
     if auth_method == "IdC" {
+        token_data["region"] = serde_json::json!(account.region.as_deref().unwrap_or("us-east-1"));
         token_data["scopes"] = serde_json::json!([
             "codewhisperer:completions",
             "codewhisperer:analysis",
@@ -427,9 +430,10 @@ fn build_switch_payload(
         token_data["profile_arn"] = serde_json::json!(profile_arn);
     }
 
-    // Social 账号：补齐 start_url 和 profile_arn
+    // Social 账号：补齐 provider 和 profile_arn（与 kiro-cli 实际 token 字段一致）
     if auth_method == "social" {
-        token_data["start_url"] = serde_json::json!("https://view.awsapps.com/start");
+        // kiro-cli social token 用小写 provider 标识来源（google / github）
+        token_data["provider"] = serde_json::json!(if provider.as_str() == "Google" { "google" } else { "github" });
         let profile_arn = account.profile_arn.as_ref()
             .map(|s| s.as_str())
             .unwrap_or(SOCIAL_PROFILE_ARN);

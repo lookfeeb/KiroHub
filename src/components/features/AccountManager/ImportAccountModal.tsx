@@ -4,7 +4,8 @@ import { Stack, Group } from '@/components/shared/layout'
 
 import { Progress } from '@/components/ui/progress'
 import { Alert } from '@/components/ui/alert'
-import { Upload, FileJson, AlertCircle, CheckCircle, Loader2, Database, RefreshCw } from 'lucide-react'
+import { Upload, FileJson, AlertCircle, CheckCircle, Loader2, Database, RefreshCw, LogIn } from 'lucide-react'
+import Login from '../Login'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../../hooks/useApp'
 
@@ -132,7 +133,7 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
     ringColor: theme === 'dark' ? 'ring-primary/40' : 'ring-primary/20'
   }), [theme])
   const [activeTab, setActiveTab] = useState('json')
-  const [osType, setOsType] = useState('')
+  const [, setOsType] = useState('')
   const [jsonText, setJsonText] = useState('')
   const [parseResult, setParseResult] = useState<any>(null)
   const [importing, setImporting] = useState(false)
@@ -148,23 +149,12 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
   const [kiroResult, setKiroResult] = useState<any>(null)
 
   // 从 kiro-cli 导入相关状态
-  // 在线登入相关状态
-  const [onlineLoginPending, setOnlineLoginPending] = useState(false)
-  const [onlineLoginError, setOnlineLoginError] = useState('')
-  const [showWaitingModal, setShowWaitingModal] = useState(false)
-  const [waitingProviderName, setWaitingProviderName] = useState('')
-  const [supportedProviders, setSupportedProviders] = useState<string[]>([])
-  const [showEnterpriseModal, setShowEnterpriseModal] = useState(false)
-  const [enterpriseStartUrl, setEnterpriseStartUrl] = useState('')
-  const [enterpriseRegion, setEnterpriseRegion] = useState('us-east-1')
-
   // 从 kiro-cli 导入相关状态
   const [kiroCliDbPath, setKiroCliDbPath] = useState('')
   const [kiroCliDetected, setKiroCliDetected] = useState(false)
   const [kiroCliDetecting, setKiroCliDetecting] = useState(false)
   const [kiroCliImporting, setKiroCliImporting] = useState(false)
   const [kiroCliResult, setKiroCliResult] = useState<any>(null)
-  const isWindowsOs = osType === 'windows'
 
   useEffect(() => {
     let isMounted = true
@@ -594,8 +584,8 @@ return (
                 <button
                   onClick={() => setActiveTab('json')}
                   className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'json'
-                    ? `glass-card shadow-sm ring-1 ${colors.ringColor} text-foreground`
-                    : `hover:bg-muted/50 text-muted-foreground`
+                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
+                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
                   }`}
                 >
                   <div className="flex items-center justify-center gap-2">
@@ -606,8 +596,8 @@ return (
                 <button
                   onClick={() => setActiveTab('kiro')}
                   className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'kiro'
-                    ? `glass-card shadow-sm ring-1 ${colors.ringColor} text-foreground`
-                    : `hover:bg-muted/50 text-muted-foreground`
+                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
+                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
                   }`}
                 >
                   <div className="flex items-center justify-center gap-2">
@@ -618,13 +608,25 @@ return (
                 <button
                   onClick={() => setActiveTab('kiro-cli')}
                   className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'kiro-cli'
-                    ? `glass-card shadow-sm ring-1 ${colors.ringColor} text-foreground`
-                    : `hover:bg-muted/50 text-muted-foreground`
+                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
+                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
                   }`}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <Database size={16} />
                     <span>{t('import.kiroCliTab')}</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setActiveTab('online')}
+                  className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'online'
+                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
+                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <LogIn size={16} />
+                    <span>{t('nav.desktopOAuth')}</span>
                   </div>
                 </button>
                 
@@ -781,24 +783,12 @@ return (
             <TabsContent value="kiro-cli" className="px-6 pb-4 pt-4 outline-none">
               <Stack gap="lg">
                 <Alert variant="info">
+                  <AlertCircle size={16} />
                   <div className={`text-sm font-medium text-foreground`}>{t('import.kiroCliTitle')}</div>
-                  <div className={`text-xs mt-1 text-muted-foreground`}>
+                  <div className={`text-xs mt-1 text-muted-foreground whitespace-pre-line`}>
                     {t('import.kiroCliHint')}
                   </div>
-                  <div className={`text-xs mt-1 text-muted-foreground`}>
-                    {t('import.kiroCliInstallPrefix')} <code>{t('import.kiroCliInstallCommand')}</code>
-                  </div>
                 </Alert>
-
-                {isWindowsOs && (
-                  <Alert variant="info">
-                    <AlertCircle size={16} />
-                    <div className={`text-sm font-medium text-foreground`}>{t('import.kiroCliWindowsTitle')}</div>
-                    <div className={`text-xs mt-1 text-muted-foreground`}>
-                      {t('import.kiroCliWindowsHint')}
-                    </div>
-                  </Alert>
-                )}
 
                 {kiroCliDetecting ? (
                   <div className={`p-5 rounded-xl bg-muted/30 border border-border`}>
@@ -865,7 +855,11 @@ return (
               </Stack>
             </TabsContent>
 
-            
+            <TabsContent value="online" className="outline-none">
+              <div className="h-[460px] overflow-auto">
+                <Login onLogin={onClose} />
+              </div>
+            </TabsContent>
           </Tabs>
         )}
       </DialogBody>

@@ -37,13 +37,13 @@ function SectionCard({
   children,
 }: SectionCardProps) {
   return (
-    <Card className={`card-glow ${className}`}>
+    <Card className={`card-glow border-border/70 transition-all duration-200 hover:border-border ${className}`}>
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 border-b border-border/50 pb-2.5">
           <div className={`w-1 h-4 ${ACCENT_CLASS[accent]} rounded-full`} />
           {icon}
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          {badge}
+          {badge && <span className="ml-auto flex items-center">{badge}</span>}
         </div>
         {desc && <p className="text-xs text-muted-foreground -mt-1">{desc}</p>}
         {children}

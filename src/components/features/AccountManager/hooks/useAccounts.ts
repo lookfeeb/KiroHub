@@ -45,9 +45,9 @@ export function useAccounts() {
     }
   }, [])
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (silent = false) => {
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       const loadedAccounts = await invoke<any[]>('get_accounts')
       const normalizedAccounts = Array.isArray(loadedAccounts)
         ? loadedAccounts.map(normalizeAccountForUi)
@@ -56,7 +56,7 @@ export function useAccounts() {
     } catch (e) {
       // 错误处理
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 

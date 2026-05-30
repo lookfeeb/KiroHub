@@ -220,6 +220,9 @@ impl ResponseCache {
                 let _ = fs::remove_dir_all(cache_dir);
                 let _ = fs::create_dir_all(cache_dir);
             }
+            if let Ok(conn) = crate::db::pool().get() {
+                let _ = conn.execute("DELETE FROM response_cache_meta", []);
+            }
         }
     }
 
@@ -256,7 +259,43 @@ impl ResponseCache {
         let content = serde_json::to_string(entry)?;
         fs::write(file_path, content)?;
 
+        // 大 BLOB 留磁盘；仅元数据入库（§9.5），失败不影响磁盘缓存
+        Self::upsert_cache_meta(key, entry);
+
         Ok(())
+    }
+
+    /// 把缓存元数据写入 response_cache_meta（cache_key 用 sanitize 后的键，与磁盘文件名一致）。
+    fn upsert_cache_meta(key: &str, entry: &CacheEntry) {
+        let Ok(conn) = crate::db::pool().get() else { return };
+        let session_id = key.split(':').next().unwrap_or("");
+        let _ = conn.execute(
+            "INSERT INTO response_cache_meta(cache_key,session_id,created_at,expires_at,input_tokens,output_tokens,message_count,total_chars) \
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8) \
+             ON CONFLICT(cache_key) DO UPDATE SET session_id=excluded.session_id,created_at=excluded.created_at,\
+             expires_at=excluded.expires_at,input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,\
+             message_count=excluded.message_count,total_chars=excluded.total_chars",
+            rusqlite::params![
+                Self::sanitize_key(key),
+                session_id,
+                entry.created_at as i64,
+                entry.expires_at as i64,
+                entry.input_tokens,
+                entry.output_tokens,
+                entry.message_count as i64,
+                entry.total_chars as i64,
+            ],
+        );
+    }
+
+    /// 删除某 key 的缓存元数据。
+    fn delete_cache_meta(key: &str) {
+        if let Ok(conn) = crate::db::pool().get() {
+            let _ = conn.execute(
+                "DELETE FROM response_cache_meta WHERE cache_key=?1",
+                [Self::sanitize_key(key)],
+            );
+        }
     }
 
     /// 从磁盘删除缓存
@@ -269,6 +308,7 @@ impl ResponseCache {
         if file_path.exists() {
             fs::remove_file(file_path)?;
         }
+        Self::delete_cache_meta(key);
 
         Ok(())
     }
@@ -299,6 +339,18 @@ impl ResponseCache {
                     }
                 }
             }
+        }
+
+        // 同步清理过期元数据
+        if let Ok(conn) = crate::db::pool().get() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let _ = conn.execute(
+                "DELETE FROM response_cache_meta WHERE expires_at <= ?1",
+                [now as i64],
+            );
         }
 
         Ok(removed_count)
@@ -335,7 +387,6 @@ pub struct CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::sleep;
 
     #[test]
     fn test_cache_entry_expiration() {
@@ -432,12 +483,13 @@ mod tests {
         cache.put("s2", "h2", "r2".to_string(), 100, 50, 5, 1000);
         cache.put("s3", "h3", "r3".to_string(), 100, 50, 5, 1000);
 
-        // 第一个应该被驱逐
-        let result = cache.get("s1", "h1", 5, 1000);
+        // 用大增量绕过第一层 delta 缓存，真正命中第二层 LRU
+        // 第一个应该被 LRU 驱逐（容量 2）
+        let result = cache.get("s1", "h1", 100, 100000);
         assert!(result.is_none());
 
         // 后两个应该还在
-        let result = cache.get("s2", "h2", 5, 1000);
+        let result = cache.get("s2", "h2", 100, 100000);
         assert!(result.is_some());
     }
 }

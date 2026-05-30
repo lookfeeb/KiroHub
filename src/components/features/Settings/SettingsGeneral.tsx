@@ -5,7 +5,6 @@ import React from 'react'
 import { TFunction } from 'i18next'
 import SectionCard from './SectionCard'
 import SwitchRow from './SwitchRow'
-import { useI18n } from '../../../hooks/useI18n'
 
 interface BrowserInfo {
   name: string;
@@ -60,27 +59,6 @@ interface SettingsGeneralProps {
 }
 
 /// 紧凑开关行已抽到 ./SwitchRow
-
-function LanguageSelector({ t }: { t: TFunction }) {
-  const { locale, setLocale, supportedLanguages } = useI18n()
-
-  return (
-    <div className="flex items-center justify-between py-1">
-      <div className="flex items-center gap-2">
-        <Globe size={14} className="text-muted-foreground" />
-        <span className="text-sm text-foreground">{t('settings.displayLanguage')}</span>
-      </div>
-      <Select value={locale} onValueChange={setLocale}>
-        <SelectTrigger className="h-7 w-[140px] text-xs"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {supportedLanguages.map(lang => (
-            <SelectItem key={lang.code} value={lang.code}>{lang.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  )
-}
 
 function SettingsGeneral({
   autoRefresh,
@@ -155,14 +133,6 @@ function SettingsGeneral({
 
   return (
     <div className="space-y-3">
-      {/* 语言设置 */}
-      <SectionCard
-        title={t('settings.language')}
-        icon={<Languages size={14} className="text-primary" />}
-      >
-        <LanguageSelector t={t} />
-      </SectionCard>
-
       {/* 账号管理 */}
       <SectionCard
         title={t('settings.account')}
@@ -391,11 +361,28 @@ function SettingsGeneral({
           accent="orange"
           icon={<Shield size={14} className="text-orange-500" />}
           badge={
-            systemMachineInfo?.osType ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded text-muted-foreground border border-border bg-muted/30">
-                {resolveOsLabel(systemMachineInfo.osType, t('common.unknown'))}
-              </span>
-            ) : null
+            <div className="flex items-center gap-1.5">
+              {systemMachineInfo?.requiresAdmin && (
+                <div className="group/warn relative flex items-center">
+                  <button className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-orange-500 border border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 transition-colors">
+                    <AlertTriangle size={11} />
+                    {t('settings.adminWarningTitle')}
+                  </button>
+                  <div className="invisible absolute right-0 top-full z-20 mt-1.5 w-64 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground opacity-0 shadow-lg transition-all duration-150 group-hover/warn:visible group-hover/warn:opacity-100">
+                    <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
+                      <li>{t('settings.adminWarning1')}</li>
+                      <li>{t('settings.adminWarning2')}</li>
+                      <li>{t('settings.adminWarning3')}</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              {systemMachineInfo?.osType && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded text-muted-foreground border border-border bg-muted/30">
+                  {resolveOsLabel(systemMachineInfo.osType, t('common.unknown'))}
+                </span>
+              )}
+            </div>
           }
         >
           <div className="flex items-center gap-2">
@@ -422,20 +409,6 @@ function SettingsGeneral({
               </button>
             )}
           </div>
-
-          {systemMachineInfo?.requiresAdmin && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-orange-500 hover:underline flex items-center gap-1.5 select-none">
-                <AlertTriangle size={12} />
-                {t('settings.adminWarningTitle')}
-              </summary>
-              <ul className="list-disc list-inside space-y-0.5 mt-1.5 ml-4 text-[11px] text-muted-foreground">
-                <li>{t('settings.adminWarning1')}</li>
-                <li>{t('settings.adminWarning2')}</li>
-                <li>{t('settings.adminWarning3')}</li>
-              </ul>
-            </details>
-          )}
         </SectionCard>
       </div>
     </div>

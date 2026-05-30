@@ -14,6 +14,27 @@ pub fn open_browser(url: &str) -> Result<(), String> {
     }
 }
 
+/// 打开浏览器但强制去除无痕/隐私模式参数（用于 MCP OAuth 授权，需复用已登录会话）。
+/// 仅过滤已知无痕 flag，其余自定义参数保留；未配置自定义浏览器时回退系统默认浏览器。
+pub fn open_browser_keep_session(url: &str) -> Result<(), String> {
+    let Some(browser_path) = get_browser_path() else {
+        return open_with_default_browser(url);
+    };
+    let (exe_path, mut args) = parse_browser_command(&browser_path)?;
+    args.retain(|a| {
+        !matches!(
+            a.as_str(),
+            "--incognito" | "--inprivate" | "-private-window" | "-private" | "--private"
+        )
+    });
+    args.push(url.to_string());
+    std::process::Command::new(&exe_path)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("打开自定义浏览器失败: {e} (路径: {exe_path})"))?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedBrowser {

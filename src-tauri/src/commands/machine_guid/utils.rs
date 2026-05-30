@@ -17,7 +17,7 @@ static HEX32_REGEX: LazyLock<Regex> =
 pub fn get_macos_override_path() -> std::path::PathBuf {
     dirs::data_dir()
         .unwrap_or_default()
-        .join(".kiro-account-manager")
+        .join(".kirohub")
         .join("machine-id-override")
 }
 

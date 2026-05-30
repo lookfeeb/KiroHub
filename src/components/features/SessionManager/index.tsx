@@ -7,22 +7,26 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Search, Trash2, Download, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react'
+import { Loader2, Search, Trash2, Download, MessageSquare, ChevronRight, ChevronDown, Terminal, Monitor, Folder } from 'lucide-react'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useDialog } from '@/contexts/DialogContext'
 import { showSuccess, showError, showWarning } from '@/utils/toast'
+import { useTranslation } from 'react-i18next'
 
 export default function SessionManager() {
+  const { t } = useTranslation()
   const { showConfirm } = useDialog()
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null)
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set())
   const [workspaceSessions, setWorkspaceSessions] = useState<Map<string, SessionSummary[]>>(new Map())
   const [selectedSession, setSelectedSession] = useState<IdeSession | null>(null)
+  const [selectedWorkspaceHash, setSelectedWorkspaceHash] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkspaceHashes, setSelectedWorkspaceHashes] = useState<Set<string>>(new Set())
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set(['ide', 'cli']))
 
   // 加载 workspaces
   useEffect(() => {
@@ -56,7 +60,23 @@ export default function SessionManager() {
     }
   }
 
+  const sourceOf = (hash: string): 'ide' | 'cli' => (hash.startsWith('cli:') ? 'cli' : 'ide')
+
+  const toggleSource = (src: string) => {
+    setExpandedSources(prev => {
+      const n = new Set(prev)
+      if (n.has(src)) n.delete(src)
+      else n.add(src)
+      return n
+    })
+  }
+
   const decodeWorkspaceName = (hash: string) => {
+    if (hash.startsWith('cli:')) {
+      const cwd = hash.slice(4)
+      const parts = cwd.split(/[/\\]/).filter(Boolean)
+      return parts[parts.length - 1] || cwd || 'CLI'
+    }
     try {
       // 移除末尾的 __ 或 _
       const cleaned = hash.replace(/_+$/, '')
@@ -76,6 +96,8 @@ export default function SessionManager() {
       setLoading(true)
       const data = await sessionApi.listWorkspaces()
       setWorkspaces(data)
+      // 预取每个工作区的会话，使计数全自动显示（无需展开）
+      data.forEach(ws => { loadSessionsForWorkspace(ws) })
     } catch (error) {
       console.error('Failed to load workspaces:', error)
       showError('加载工作区失败：' + error)
@@ -95,6 +117,7 @@ export default function SessionManager() {
       setSelectedSession(null) // 先清空，避免显示旧数据
       const data = await sessionApi.loadSession(workspaceHash, session.sessionId)
       setSelectedSession(data)
+      setSelectedWorkspaceHash(workspaceHash)
     } catch (error) {
       console.error('Failed to load session:', error)
       showError('加载失败：' + error)
@@ -235,25 +258,11 @@ export default function SessionManager() {
   }
 
   const handleExportSession = async (format: 'json' | 'markdown') => {
-    if (!selectedSession) return
+    if (!selectedSession || !selectedWorkspaceHash) return
 
     try {
-      // 从 workspaceSessions 中找到对应的 session 获取 workspaceHash
-      let workspaceHash = ''
-      for (const [hash, sessions] of workspaceSessions.entries()) {
-        if (sessions.some(s => s.sessionId === selectedSession.sessionId)) {
-          workspaceHash = hash
-          break
-        }
-      }
-
-      if (!workspaceHash) {
-        showError('无法找到会话所属的工作区')
-        return
-      }
-
       const content = await sessionApi.exportSession(
-        workspaceHash,
+        selectedWorkspaceHash,
         selectedSession.sessionId,
         format
       )
@@ -296,6 +305,29 @@ export default function SessionManager() {
     return new Date(timestamp * 1000).toLocaleString('zh-CN')
   }
 
+  // 清洗会话标题：去除 HTML/代码标签、压缩空白、截断
+  const cleanTitle = (raw?: string) => {
+    if (!raw) return '未命名会话'
+    let text = raw
+      .replace(/<\/?[a-zA-Z][^>]*>?/g, ' ')   // 去 HTML 标签（含未闭合的 <button ...）
+      .replace(/&[a-zA-Z#0-9]+;/g, ' ')        // 去 HTML 实体
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!text) return '未命名会话'
+    return text.length > 60 ? text.slice(0, 60) + '…' : text
+  }
+
+  const renderSourceBadge = (s?: string) => (
+    <Badge
+      variant="outline"
+      className={`text-xs h-4 px-1.5 ${s === 'cli'
+        ? 'border-purple-500/40 text-purple-600 dark:text-purple-400'
+        : 'border-blue-500/40 text-blue-600 dark:text-blue-400'}`}
+    >
+      {s === 'cli' ? 'CLI' : 'IDE'}
+    </Badge>
+  )
+
   // 获取工作区的会话列表
   const getWorkspaceSessions = (workspaceHash: string) => {
     return workspaceSessions.get(workspaceHash) || []
@@ -310,7 +342,7 @@ export default function SessionManager() {
         </div>
         <div className="flex flex-col">
           <h1 className="text-lg font-semibold text-foreground leading-tight">会话管理</h1>
-          <p className="text-sm text-muted-foreground leading-tight">管理 Kiro IDE 的 chat sessions</p>
+          <p className="text-sm text-muted-foreground leading-tight">{t('session.subtitle')}</p>
         </div>
       </div>
 
@@ -357,8 +389,8 @@ export default function SessionManager() {
             </div>
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
+          <ScrollArea className="flex-1 w-72">
+            <div className="p-2 space-y-1 overflow-hidden">
               {/* 搜索模式：显示所有匹配的会话 */}
               {searchQuery && (
                 <div className="space-y-2">
@@ -398,6 +430,7 @@ export default function SessionManager() {
                             </Button>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
+                            {renderSourceBadge(session.source)}
                             <Badge variant="secondary" className="text-xs">
                               {session.sessionType}
                             </Badge>
@@ -416,135 +449,107 @@ export default function SessionManager() {
                 </div>
               )}
 
-              {/* 正常模式：显示工作区树 */}
-              {!searchQuery && workspaces.map(workspace => {
-                const isExpanded = expandedWorkspaces.has(workspace)
-                const sessions = getWorkspaceSessions(workspace)
-
+              {/* 正常模式：树形列表 —— 来源分组 → 工作区 → 会话 */}
+              {!searchQuery && (['cli', 'ide'] as const).map(src => {
+                const groupWorkspaces = workspaces.filter(w => sourceOf(w) === src)
+                if (groupWorkspaces.length === 0) return null
+                const groupOpen = expandedSources.has(src)
                 return (
-                  <div key={workspace} className="space-y-1">
-                    {/* Workspace Row */}
-                    <div
-                      className={`group relative rounded-md transition-all ${selectedWorkspace === workspace
-                          ? 'bg-primary text-primary-foreground shadow-sm'
-                          : ''
-                        }`}
+                  <div key={src}>
+                    {/* 分组头 */}
+                    <button
+                      onClick={() => toggleSource(src)}
+                      className="w-full flex items-center gap-1.5 px-1.5 h-7 rounded-md hover:bg-muted/60 transition-colors"
                     >
-                      <div className="flex items-center gap-2 px-2 py-2">
-                        {/* Expand/Collapse Icon */}
-                        <button
-                          onClick={() => toggleWorkspace(workspace)}
-                          className="shrink-0 hover:bg-accent rounded p-1"
-                          title={isExpanded ? '折叠' : '展开'}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </button>
+                      <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground/70 shrink-0 transition-transform ${groupOpen ? 'rotate-90' : ''}`} />
+                      {src === 'cli'
+                        ? <Terminal className="h-3.5 w-3.5 text-primary shrink-0" />
+                        : <Monitor className="h-3.5 w-3.5 text-primary shrink-0" />}
+                      <span className="text-xs font-semibold text-foreground">{src === 'cli' ? 'Kiro CLI' : 'Kiro IDE'}</span>
+                      <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">{groupWorkspaces.length}</span>
+                    </button>
 
-                        {/* Checkbox */}
-                        <Checkbox
-                          checked={selectedWorkspaceHashes.has(workspace)}
-                          onCheckedChange={(checked) => {
-                            toggleWorkspaceSelection(workspace)
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="shrink-0 cursor-pointer"
-                        />
-
-                        {/* Workspace Name */}
-                        <button
-                          onClick={() => {
-                            setSelectedWorkspace(workspace)
-                            toggleWorkspace(workspace)
-                          }}
-                          className={`flex-1 text-left text-sm transition-all rounded-md px-2 py-1 ${selectedWorkspace === workspace
-                              ? ''
-                              : 'hover:bg-accent'
-                            }`}
-                          title={workspace}
-                        >
-                          <div className="truncate font-medium">
-                            {decodeWorkspaceName(workspace)}
-                          </div>
-                          {isExpanded && sessions.length > 0 && (
-                            <div className="text-xs opacity-70 mt-0.5">
-                              {sessions.length} 个会话
-                            </div>
-                          )}
-                        </button>
-
-                        {/* Delete Button */}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-6 w-6 shrink-0 ${selectedWorkspace === workspace
-                              ? 'text-primary-foreground hover:bg-primary-foreground/20'
-                              : 'hover:bg-destructive hover:text-destructive-foreground'
-                            }`}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDeleteWorkspace(workspace)
-                          }}
-                          title="删除工作区"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Sessions under this workspace (when expanded) */}
-                    {isExpanded && (
-                      <div className="ml-6 space-y-1">
-                        {loading && sessions.length === 0 ? (
-                          <div className="flex items-center justify-center py-4">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          </div>
-                        ) : sessions.length === 0 ? (
-                          <div className="text-xs text-muted-foreground py-2 px-3">
-                            暂无会话
-                          </div>
-                        ) : (
-                          sessions.map(session => (
-                            <Card
-                              key={session.sessionId}
-                              className={`p-2 cursor-pointer hover:bg-accent transition-colors ${selectedSession?.sessionId === session.sessionId ? 'bg-accent' : ''
-                                }`}
-                              onClick={() => handleSelectSession(workspace, session)}
-                            >
-                              <div className="space-y-1.5">
-                                <div className="flex items-start justify-between gap-2">
-                                  <h3 className="font-medium text-xs line-clamp-2 flex-1">
-                                    {session.title}
-                                  </h3>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 shrink-0 hover:bg-destructive hover:text-destructive-foreground"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleDeleteSession(workspace, session)
-                                    }}
-                                    title="删除会话"
-                                  >
-                                    <Trash2 className="h-2.5 w-2.5" />
-                                  </Button>
-                                </div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <Badge variant="secondary" className="text-xs h-4 px-1.5">
-                                    {session.sessionType}
-                                  </Badge>
-                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                    <MessageSquare className="h-2.5 w-2.5" />
-                                    {session.messageCount}
-                                  </span>
-                                </div>
+                    {/* 工作区 + 会话 */}
+                    {groupOpen && (
+                      <div className="mt-0.5">
+                        {groupWorkspaces.map(workspace => {
+                          const isExpanded = expandedWorkspaces.has(workspace)
+                          const sessions = getWorkspaceSessions(workspace)
+                          const checked = selectedWorkspaceHashes.has(workspace)
+                          return (
+                            <div key={workspace}>
+                              {/* 工作区行 */}
+                              <div
+                                className="group flex items-center h-8 pl-4 pr-1.5 rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
+                                onClick={() => toggleWorkspace(workspace)}
+                                title={workspace}
+                              >
+                                <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground/70 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={() => toggleWorkspaceSelection(workspace)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`ml-1 shrink-0 cursor-pointer transition-opacity ${checked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                />
+                                <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0 ml-1.5" />
+                                <span className="ml-1.5 flex-1 min-w-0 truncate text-xs font-medium text-foreground">
+                                  {decodeWorkspaceName(workspace)}
+                                </span>
+                                {sessions.length > 0 && (
+                                  <span className="text-[10px] text-muted-foreground tabular-nums mr-1 shrink-0">{sessions.length}</span>
+                                )}
+                                <button
+                                  className="h-5 w-5 shrink-0 rounded inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground transition-all"
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(workspace) }}
+                                  title="删除工作区"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
                               </div>
-                            </Card>
-                          ))
-                        )}
+
+                              {/* 会话条目 */}
+                              {isExpanded && (
+                                <div>
+                                  {loading && sessions.length === 0 ? (
+                                    <div className="flex items-center justify-center py-3 pl-10">
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                    </div>
+                                  ) : sessions.length === 0 ? (
+                                    <div className="text-[11px] text-muted-foreground/70 py-1.5 pl-10">暂无会话</div>
+                                  ) : (
+                                    sessions.map(session => {
+                                      const active = selectedSession?.sessionId === session.sessionId
+                                      return (
+                                        <div
+                                          key={session.sessionId}
+                                          className={`group relative flex items-center h-8 pl-10 pr-1.5 cursor-pointer transition-colors before:absolute before:left-[26px] before:top-1/2 before:-translate-y-1/2 before:h-1.5 before:w-1.5 before:rounded-full ${active
+                                            ? 'bg-primary/10 before:bg-primary'
+                                            : 'hover:bg-muted/50 before:bg-muted-foreground/30'}`}
+                                          onClick={() => handleSelectSession(workspace, session)}
+                                          title={cleanTitle(session.title)}
+                                        >
+                                          <span className={`flex-1 min-w-0 truncate text-xs ${active ? 'text-primary font-medium' : 'text-foreground/90'}`}>
+                                            {cleanTitle(session.title)}
+                                          </span>
+                                          <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground tabular-nums ml-2 shrink-0 group-hover:opacity-0 transition-opacity">
+                                            <MessageSquare className="h-2.5 w-2.5" />{session.messageCount}
+                                          </span>
+                                          <button
+                                            className="absolute right-1.5 h-5 w-5 rounded inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground transition-all"
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteSession(workspace, session) }}
+                                            title="删除会话"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      )
+                                    })
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -562,14 +567,38 @@ export default function SessionManager() {
             </div>
           ) : selectedSession ? (
             <>
-              <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-border flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-sm font-semibold text-foreground truncate">{selectedSession.title}</h2>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate font-mono">
-                    {selectedSession.workspaceDirectory}
-                  </p>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    {renderSourceBadge(sourceOf(selectedWorkspaceHash))}
+                    <span className="text-[11px] text-muted-foreground flex items-center gap-1 min-w-0 max-w-[280px]">
+                      <Folder className="h-3 w-3 shrink-0" />
+                      <span className="truncate" title={selectedSession.workspaceDirectory}>
+                        {selectedSession.workspaceDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedSession.workspaceDirectory || '—'}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
+                      <MessageSquare className="h-3 w-3" />
+                      {selectedSession.history.length}
+                    </span>
+                  </div>
+                  <h2
+                    className="text-sm font-semibold text-foreground line-clamp-2 leading-snug cursor-pointer hover:underline"
+                    title="点击复制会话文件路径"
+                    onClick={async () => {
+                      try {
+                        const path = await sessionApi.getSessionFilePath(selectedWorkspaceHash, selectedSession.sessionId)
+                        await navigator.clipboard.writeText(path)
+                        showSuccess('已复制文件路径')
+                      } catch (e) {
+                        showError('复制失败：' + String(e))
+                      }
+                    }}
+                  >
+                    {selectedSession.title}
+                  </h2>
                 </div>
-                <div className="flex gap-1.5 ml-3">
+                <div className="flex gap-1.5 shrink-0">
                   <Button
                     variant="outline"
                     size="sm"

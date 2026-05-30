@@ -179,7 +179,7 @@ function PromptFilterRulesDialog({ open, onOpenChange, promptFilterRules, setFie
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">规则类型</Label>
                 <Select defaultValue="lines-containing">
-                  <SelectTrigger id="dialog-filter-type">
+                  <SelectTrigger id="dialog-filter-type" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

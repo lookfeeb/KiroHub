@@ -35,12 +35,9 @@ const DialogOverlay = React.forwardRef<HTMLDivElement, DialogOverlayProps>(({ cl
   return (
     <DialogBackdrop
       ref={ref}
-      transition
       className={cn(
         "fixed inset-0",
-        "bg-black/60 backdrop-blur-sm",
-        "duration-300 ease-out",
-        "data-[closed]:opacity-0",
+        "bg-black/60",
         className
       )}
       {...props}
@@ -73,13 +70,10 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(({
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <DialogPanel
           ref={ref}
-          transition
           className={cn(
             "relative w-full max-h-[90vh]",
             "flex flex-col",
             "rounded-2xl border shadow-2xl",
-            "duration-300 ease-out",
-            "data-[closed]:opacity-0 data-[closed]:scale-95",
             "glass-card",
             "border-border",
             className
@@ -92,14 +86,13 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(({
             <CloseButton
               className={cn(
                 "absolute right-4 top-4 z-10",
-                "p-2 rounded-xl",
+                "p-2 rounded-xl cursor-pointer group",
                 "transition-all duration-200",
-                "hover:scale-110",
-                "focus:outline-none focus:ring-2 focus:ring-blue-500/30",
-                "hover:bg-muted/50"
+                "hover:bg-destructive/10 hover:rotate-90",
+                "focus:outline-none focus:ring-2 focus:ring-destructive/30"
               )}
             >
-              <X size={18} className="text-muted-foreground" />
+              <X size={18} className="text-muted-foreground group-hover:text-destructive transition-colors" />
               <span className="sr-only">关闭</span>
             </CloseButton>
           )}

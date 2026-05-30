@@ -80,7 +80,9 @@ function UpdateDialog({ updateInfo, update, onClose }) {
 
   return (
     <Dialog open={true} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
+      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" showCloseButton={false}>
+        <DialogTitle className="sr-only">{t('update.newVersionAvailable')}</DialogTitle>
+        <DialogDescription className="sr-only">v{updateInfo?.version} {t('update.readyToInstall')}</DialogDescription>
         {/* 顶部横幅 */}
         <div className="bg-gradient-to-r from-blue-500 to-indigo-600 px-6 py-5 relative">
           <div className="flex items-center gap-4">

@@ -140,11 +140,8 @@ impl UsageDetails {
             .as_array()?
             .first()?;
 
-        let main_limit = item.get("usageLimit").and_then(Value::as_f64).unwrap_or(0.0);
-        let main_usage = item
-            .get("currentUsage")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        let main_limit = read_amount(item, "usageLimit", "usageLimitWithPrecision").unwrap_or(0.0);
+        let main_usage = read_amount(item, "currentUsage", "currentUsageWithPrecision").unwrap_or(0.0);
 
         // 免费试用（仅 ACTIVE 时计入）
         let trial_info = item.get("freeTrialInfo");
@@ -194,7 +191,7 @@ impl UsageDetails {
             .unwrap_or((0.0, 0.0));
 
         let overage_cap = if OverageStatus::from_usage_data(usage_data).is_enabled() {
-            item.get("overageCap").and_then(Value::as_f64).unwrap_or(0.0)
+            read_amount(item, "overageCap", "overageCapWithPrecision").unwrap_or(0.0)
         } else {
             0.0
         };

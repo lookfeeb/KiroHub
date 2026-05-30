@@ -22,6 +22,11 @@ export const sessionApi = {
     return invoke('delete_session', { workspaceHash, sessionId })
   },
 
+  // 获取 session 文件的真实磁盘路径
+  async getSessionFilePath(workspaceHash: string, sessionId: string): Promise<string> {
+    return invoke('get_session_file_path', { workspaceHash, sessionId })
+  },
+
   // 删除整个 workspace
   async deleteWorkspace(workspaceHash: string): Promise<void> {
     return invoke('delete_workspace', { workspaceHash })

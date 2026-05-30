@@ -152,8 +152,10 @@ async fn login_social(
 
     println!("\n[social] LOGIN STARTED: {provider_id}");
 
-    // 3. 等待回调（阻塞直到用户完成授权或超时）
-    let callback_result = waiter.wait_for_callback()?;
+    // 3. 等待回调（在阻塞线程中等待，避免阻塞 async 执行器）
+    let callback_result = tokio::task::spawn_blocking(move || waiter.wait_for_callback())
+        .await
+        .map_err(|e| format!("Failed to join callback waiter: {e}"))??;
 
     // 4. 用 code 换 token
     let token_result: crate::auth::providers::SocialTokenResponse = client

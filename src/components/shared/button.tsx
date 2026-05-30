@@ -23,7 +23,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({
   
   const variants = {
     primary: "bg-gradient-to-r from-blue-500 to-purple-600 shadow-lg shadow-blue-500/30 hover:opacity-90 hover:shadow-xl text-white",
-    secondary: `bg-secondary text-secondary-foreground border`,
+    secondary: `bg-secondary text-secondary-foreground border hover:bg-secondary/70 hover:border-primary/40`,
     success: "bg-gradient-to-r from-emerald-500 to-teal-600 shadow-lg shadow-emerald-500/30 hover:opacity-90 hover:shadow-xl text-white",
     danger: "bg-gradient-to-r from-red-500 to-pink-600 shadow-lg shadow-red-500/30 hover:opacity-90 hover:shadow-xl text-white"}
   
@@ -40,7 +40,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({
         "font-medium rounded-xl",
         "disabled:opacity-50 disabled:cursor-not-allowed",
         "flex items-center gap-2 justify-center",
-        "transition-all duration-200 active:scale-[0.98]",
+        "transition-all duration-200 cursor-pointer hover:-translate-y-px active:translate-y-0 active:scale-[0.97]",
         variants[variant],
         sizes[size],
         className

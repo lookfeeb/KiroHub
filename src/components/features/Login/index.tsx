@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { listen, emit, UnlistenFn } from '@tauri-apps/api/event'
 import { Loader } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import { Button } from '../../shared/button'
@@ -144,6 +144,7 @@ function Login({ onLogin }: LoginProps) {
 
     try {
       await invoke('kiro_login', { provider })
+      await emit('accounts-updated')
       onLogin?.()
     } catch (e) {
       console.error('Login error:', e)
@@ -197,6 +198,7 @@ function Login({ onLogin }: LoginProps) {
         startUrl: normalizedStartUrl,
         region: normalizedRegion,
       })
+      await emit('accounts-updated')
       onLogin?.()
     } catch (e) {
       console.error('Login error:', e)
@@ -250,7 +252,7 @@ function Login({ onLogin }: LoginProps) {
                 className={`group relative h-14 px-8 min-w-[280px] rounded-xl glass-card border border-border flex items-center justify-center gap-3 transition-all duration-200 ${
                   isLoading
                     ? 'opacity-60 cursor-not-allowed'
-                    : 'hover:bg-muted/50 hover:border-primary/40 hover:shadow-sm'
+                    : 'cursor-pointer hover:bg-primary/10 hover:border-primary hover:shadow-md'
                 } ${isDisabled ? 'opacity-30' : ''}`}
               >
                 {isLoading ? <Loader size={22} className="text-primary animate-spin" /> : provider.icon}

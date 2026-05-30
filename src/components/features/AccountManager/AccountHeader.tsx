@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Search, Download, Upload, RefreshCcw, RotateCw, Trash2, ArrowUp, ArrowDown, X, TrendingUp, Clock, Calendar, CheckSquare, Square, Sparkles, LayoutGrid, List, Edit } from 'lucide-react'
+import { Search, FileDown, RefreshCcw, RotateCw, Trash2, ArrowUp, ArrowDown, X, TrendingUp, Clock, Calendar, CheckSquare, Square, Sparkles, LayoutGrid, List, Edit, Check } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import FilterDropdown from './FilterDropdown'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface AccountHeaderProps {
   searchTerm: string;
@@ -57,16 +58,20 @@ function IconButton({ onClick, active, disabled, title, ariaLabel, accent, badge
     ? `${accent.solidBg} text-white shadow-sm`
     : 'glass-card border border-border hover:bg-muted/50 text-muted-foreground'
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={ariaLabel || title}
-      className={`${base} ${variant} ${accent.ring} ${className}`}
-    >
-      {children}
-      {badge}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={ariaLabel || title}
+          className={`${base} ${variant} ${accent.ring} ${className}`}
+        >
+          {children}
+          {badge}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -104,6 +109,8 @@ function AccountHeader({
   const accent = useMemo(() => getThemeAccent(theme), [theme])
 
   const [searchExpanded, setSearchExpanded] = useState(false)
+  const [refreshSpin, setRefreshSpin] = useState(false)
+  const [refreshDone, setRefreshDone] = useState(false)
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
   const searchRef = useRef<HTMLDivElement>(null)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -240,43 +247,6 @@ function AccountHeader({
                   )
                 })}
               </div>
-
-              {/* 视图切换 */}
-              <div className="flex gap-0.5 border border-border rounded-md p-0.5 bg-card/40">
-                <IconButton
-                  onClick={() => onViewModeChange('card')}
-                  active={viewMode === 'card'}
-                  title={t('accounts.cardView')}
-                  accent={accent}
-                  className="h-7 w-7 border-0"
-                >
-                  <LayoutGrid size={13} />
-                </IconButton>
-                <IconButton
-                  onClick={() => onViewModeChange('table')}
-                  active={viewMode === 'table'}
-                  title={t('accounts.tableView')}
-                  accent={accent}
-                  className="h-7 w-7 border-0"
-                >
-                  <List size={13} />
-                </IconButton>
-              </div>
-
-              {/* 筛选面板 */}
-              <FilterDropdown
-                filters={advancedFilters}
-                onFiltersChange={onAdvancedFiltersChange}
-                allGroups={allGroups}
-                selectedGroup={selectedGroup}
-                onGroupFilter={onGroupFilter}
-                allTags={allTags}
-                selectedTag={selectedTag}
-                onTagFilter={onTagFilter}
-                selectedStatus={selectedStatus}
-                onStatusFilter={onStatusFilter}
-                defaultGroupCollapsed={true}
-              />
             </>
           )}
 
@@ -318,14 +288,13 @@ function AccountHeader({
 
           {/* 通用操作按钮组 */}
           <div className="flex gap-1 ml-1">
-            <IconButton onClick={onImport} title={t('accounts.import')} accent={accent}>
-              <Upload size={14} className={accent.text} />
-            </IconButton>
             <IconButton onClick={onExport} title={t('accounts.export')} accent={accent}>
-              <Download size={14} className={accent.text} />
+              <FileDown size={14} className={accent.text} />
             </IconButton>
-            <IconButton onClick={onRefresh} title={t('accounts.refreshList')} accent={accent}>
-              <RotateCw size={14} />
+            <IconButton onClick={() => { setRefreshSpin(true); setRefreshDone(false); onRefresh(); setTimeout(() => { setRefreshSpin(false); setRefreshDone(true); setTimeout(() => setRefreshDone(false), 900) }, 600) }} title={t('accounts.refreshList')} accent={accent}>
+              {refreshDone
+                ? <Check size={14} className="text-green-500" />
+                : <RotateCw size={14} className={refreshSpin ? 'animate-spin' : ''} />}
             </IconButton>
             <IconButton onClick={onRefreshAll} disabled={autoRefreshing} title={t('accounts.refreshAll')} accent={accent}>
               <RefreshCcw size={14} className={`${accent.text} ${autoRefreshing ? 'animate-spin' : ''}`} />

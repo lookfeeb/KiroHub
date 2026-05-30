@@ -333,20 +333,19 @@ impl LoadBalancer {
             .cloned()
     }
 
-    /// 增加账号的活跃连接数
-    pub async fn increment_connections(&self, account_id: &str) {
-        let mut health_map = self.health_map.write().await;
-        health_map
-            .entry(account_id.to_string())
-            .or_insert_with(|| AccountHealth::new(account_id.to_string()))
-            .increment_connections();
-    }
-
-    /// 减少账号的活跃连接数
-    pub async fn decrement_connections(&self, account_id: &str) {
-        let mut health_map = self.health_map.write().await;
-        if let Some(health) = health_map.get_mut(account_id) {
-            health.decrement_connections();
+    /// 占用账号一个活跃连接，返回租约；租约 drop 时自动释放连接计数。
+    /// 应在真正发送上游请求前调用，确保成功/失败/流式结束都会释放。
+    pub async fn lease_connection(&self, account_id: &str) -> ConnectionLease {
+        {
+            let mut health_map = self.health_map.write().await;
+            health_map
+                .entry(account_id.to_string())
+                .or_insert_with(|| AccountHealth::new(account_id.to_string()))
+                .increment_connections();
+        }
+        ConnectionLease {
+            health_map: Arc::clone(&self.health_map),
+            account_id: account_id.to_string(),
         }
     }
 
@@ -458,6 +457,27 @@ impl LoadBalancer {
     }
 }
 
+/// 连接租约：持有期间占用账号一个活跃连接，drop 时异步释放。
+pub struct ConnectionLease {
+    health_map: Arc<RwLock<HashMap<String, AccountHealth>>>,
+    account_id: String,
+}
+
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        let health_map = Arc::clone(&self.health_map);
+        let account_id = std::mem::take(&mut self.account_id);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut map = health_map.write().await;
+                if let Some(health) = map.get_mut(&account_id) {
+                    health.decrement_connections();
+                }
+            });
+        }
+    }
+}
+
 /// 计算账号剩余配额百分比
 fn remaining_quota(account: &Account) -> f64 {
     // 从 usage_data 中提取配额信息
@@ -541,6 +561,8 @@ mod tests {
                 last_failure_at: None,
                 disabled_reason: None,
                 success_count: 0,
+                enabled: true,
+                last_quota_check_at: None,
             },
             Account {
                 id: "2".to_string(),
@@ -572,6 +594,8 @@ mod tests {
                 last_failure_at: None,
                 disabled_reason: None,
                 success_count: 0,
+                enabled: true,
+                last_quota_check_at: None,
             },
         ];
 
@@ -582,5 +606,29 @@ mod tests {
         assert_eq!(acc1.id, "1");
         assert_eq!(acc2.id, "2");
         assert_eq!(acc3.id, "1"); // 轮回到第一个
+    }
+
+    #[tokio::test]
+    async fn test_connection_lease_acquires_and_releases() {
+        let lb = LoadBalancer::new(LoadBalancerStrategy::LeastConnections);
+
+        let lease = lb.lease_connection("acc-1").await;
+        assert_eq!(
+            lb.get_health("acc-1").await.map(|h| h.active_connections),
+            Some(1)
+        );
+
+        drop(lease);
+        // Drop 通过 tokio::spawn 异步释放，给后台任务执行机会
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+            if lb.get_health("acc-1").await.map(|h| h.active_connections) == Some(0) {
+                break;
+            }
+        }
+        assert_eq!(
+            lb.get_health("acc-1").await.map(|h| h.active_connections),
+            Some(0)
+        );
     }
 }

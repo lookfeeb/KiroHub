@@ -30,6 +30,16 @@ pub async fn load_session(
 }
 
 #[tauri::command]
+pub async fn get_session_file_path(
+    workspace_hash: String,
+    session_id: String,
+    storage: State<'_, SessionStorage>,
+) -> Result<String, String> {
+    storage.get_session_file_path(&workspace_hash, &session_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn delete_session(
     workspace_hash: String,
     session_id: String,

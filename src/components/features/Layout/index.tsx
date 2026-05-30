@@ -2,7 +2,7 @@
 import { useState, useEffect, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
-import { User, Sun, Moon, Palette, ChevronLeft, ChevronRight, LucideIcon } from 'lucide-react'
+import { User, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { cn } from '../../../lib/utils'
@@ -34,7 +34,7 @@ function Sidebar({ activeMenu, onMenuChange }: SidebarProps) {
   const [localToken, setLocalToken] = useState<LocalToken | null>(null)
   const [version, setVersion] = useState('')
   const [collapsed, setCollapsed] = useState(false)
-  const { t, theme, setTheme } = useApp()
+  const { t } = useApp()
   const menuItems = useMenuItems()
 
   useEffect(() => {
@@ -48,32 +48,6 @@ function Sidebar({ activeMenu, onMenuChange }: SidebarProps) {
     const newState = !collapsed
     setCollapsed(newState)
     localStorage.setItem('sidebar-collapsed', String(newState))
-  }
-
-  const themeIcons: Record<string, LucideIcon> = { 
-    light: Sun, 
-    dark: Moon, 
-    'dark-one': Moon, 
-    tech: Moon, 
-    midnight: Moon,
-    purple: Palette, 
-    green: Palette,
-    business: Palette,
-    sunset: Palette,
-    ocean: Palette,
-    forest: Palette,
-    rose: Palette,
-    theme1: Palette,
-    theme2: Palette
-  }
-  
-  const ThemeIcon = themeIcons[theme as keyof typeof themeIcons] || Sun
-  
-  const themeOrder = Object.keys(themeIcons)
-  const handleThemeClick = () => {
-    const currentIndex = themeOrder.indexOf(theme)
-    const nextIndex = (currentIndex + 1) % themeOrder.length
-    setTheme(themeOrder[nextIndex])
   }
 
   return (
@@ -126,7 +100,7 @@ function Sidebar({ activeMenu, onMenuChange }: SidebarProps) {
                   <button
                     onClick={() => onMenuChange(item.id)}
                     className={cn(
-                      "flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all animate-slide-in-left",
+                      "flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all animate-slide-in-left cursor-pointer",
                       !isActive && "sidebar-foreground sidebar-hover",
                       isActive && "sidebar-active font-semibold",
                       !isActive && "font-normal"
@@ -186,23 +160,6 @@ function Sidebar({ activeMenu, onMenuChange }: SidebarProps) {
 
       <div className={cn("px-3 pb-3 flex items-center gap-2", collapsed ? "flex-col" : "justify-between")}>
         <div className="flex items-center gap-1">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleThemeClick}
-                  className="sidebar-card sidebar-foreground sidebar-hover h-7 w-7"
-                >
-                  <ThemeIcon size={14} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side={collapsed ? "right" : "top"}>
-                {t(`theme.${theme}`)}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>

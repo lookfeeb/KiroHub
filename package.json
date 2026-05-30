@@ -1,8 +1,8 @@
 {
   "name": "kiro-account-manager",
   "private": true,
-  "version": "1.8.7",
-  "description": "Kiro Account Manager - 管理 Kiro IDE 账号，支持多账号切换和配额监控",
+  "version": "0.0.1",
+  "description": "KiroHub - 管理 Kiro IDE 账号，支持多账号切换和配额监控",
   "author": "hj01857655",
   "license": "CC-BY-NC-SA-4.0",
   "repository": {
@@ -14,7 +14,8 @@
     "dev": "vite",
     "dev:tauri": "tauri dev --no-dev-server",
     "build": "vite build",
-    "build:release": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-release.ps1",
+    "typecheck": "tsc --noEmit",
+    "build:release": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./build-release.ps1",
     "preview": "vite preview",
     "tauri": "tauri",
     "extract": "lingui extract",
@@ -23,8 +24,7 @@
     "release:minor": "standard-version --release-as minor",
     "release:major": "standard-version --release-as major",
     "release:patch": "standard-version --release-as patch",
-    "release:check": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/check-release-pipeline.ps1",
-    "install:bun": "bun install"
+    "release:check": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/check-release-pipeline.ps1"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

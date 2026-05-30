@@ -1,4 +1,4 @@
-// 应用自身设置命令 (存到 ~/.kiro-account-manager/app-settings.json)
+// 应用自身设置命令 (存到 ~/.kirohub/app-settings.json)
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,6 +43,13 @@ pub struct AppSettings {
     pub custom_kiro_path: Option<String>,
     // 关闭窗口时的行为
     pub close_to_tray: Option<bool>, // true=最小化到托盘, false=直接退出
+    // 当前已切换到 CLI 的账号 id（用于前端标记 CLI 当前账号）
+    pub current_cli_account_id: Option<String>,
+    // CLI 启动参数（kiro-cli chat）
+    pub cli_launch_model: Option<String>,
+    pub cli_launch_trust_all_tools: Option<bool>,
+    pub cli_launch_agent: Option<String>,
+    pub cli_launch_extra_args: Option<String>,
 }
 
 // 兼容旧配置文件中的 redeem_server 字段（已废弃）
@@ -83,6 +90,11 @@ impl Default for AppSettings {
             telemetry_feedback: Some(false),
             custom_kiro_path: None,
             close_to_tray: Some(false), // 默认直接退出，由用户主动开启最小化到托盘
+            current_cli_account_id: None,
+            cli_launch_model: Some("claude-sonnet-4.5".to_string()),
+            cli_launch_trust_all_tools: Some(false),
+            cli_launch_agent: None,
+            cli_launch_extra_args: None,
         }
     }
 }
@@ -126,6 +138,11 @@ impl AppSettings {
         apply_if_some!(telemetry_feedback);
         apply_if_some!(custom_kiro_path);
         apply_if_some!(close_to_tray);
+        apply_if_some!(current_cli_account_id);
+        apply_if_some!(cli_launch_model);
+        apply_if_some!(cli_launch_trust_all_tools);
+        apply_if_some!(cli_launch_agent);
+        apply_if_some!(cli_launch_extra_args);
     }
 }
 
@@ -137,18 +154,11 @@ fn get_data_dir() -> PathBuf {
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home)
         })
-        .join(".kiro-account-manager")
+        .join(".kirohub")
 }
 
 fn get_app_settings_path() -> PathBuf {
     get_data_dir().join("app-settings.json")
-}
-
-fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
-    }
-    Ok(())
 }
 
 async fn run_blocking_io<T, F>(task: F) -> Result<T, String>
@@ -162,22 +172,27 @@ where
 }
 
 pub fn get_app_settings_inner() -> Result<AppSettings, String> {
-    let path = get_app_settings_path();
-    if !path.exists() {
-        // 首次启动：创建并保存默认值
-        let default_settings = AppSettings::default();
-        save_settings_to_file(&default_settings)?;
-        return Ok(default_settings);
+    if let Some(json) = crate::db::kv_get("app_settings", "settings")? {
+        return serde_json::from_str(&json).map_err(|e| format!("解析设置失败: {e}"));
     }
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取设置失败: {e}"))?;
-    serde_json::from_str(&content).map_err(|e| format!("解析设置失败: {e}"))
+    // 首次：迁移旧 app-settings.json（若有），否则用默认值；并写入 DB
+    let settings = migrate_legacy_app_settings().unwrap_or_default();
+    save_settings_to_file(&settings)?;
+    Ok(settings)
 }
 
 pub fn save_settings_to_file(settings: &AppSettings) -> Result<(), String> {
+    let content = serde_json::to_string(settings).map_err(|e| format!("序列化失败: {e}"))?;
+    crate::db::kv_set("app_settings", "settings", &content)
+}
+
+/// 一次性迁移旧 app-settings.json：解析成功后改名为 *.json.bak
+fn migrate_legacy_app_settings() -> Option<AppSettings> {
     let path = get_app_settings_path();
-    ensure_parent_dir(&path)?;
-    let content = serde_json::to_string_pretty(settings).map_err(|e| format!("序列化失败: {e}"))?;
-    std::fs::write(&path, content).map_err(|e| format!("写入失败: {e}"))
+    let content = std::fs::read_to_string(&path).ok()?;
+    let settings: AppSettings = serde_json::from_str(&content).ok()?;
+    let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+    Some(settings)
 }
 
 fn save_app_settings_inner(updates: AppSettings) -> Result<(), String> {
@@ -204,6 +219,20 @@ pub fn get_browser_path() -> Option<String> {
         .ok()
         .and_then(|s| s.browser_path)
         .filter(|p| !p.is_empty())
+}
+
+/// 记录当前已切换到 CLI 的账号 id
+pub fn set_current_cli_account_id_inner(account_id: &str) -> Result<(), String> {
+    let mut current = get_app_settings_inner().unwrap_or_default();
+    current.current_cli_account_id = Some(account_id.to_string());
+    save_settings_to_file(&current)
+}
+
+/// 获取当前 CLI 账号 id
+#[tauri::command]
+pub async fn get_current_cli_account_id() -> Result<Option<String>, String> {
+    run_blocking_io(|| Ok(get_app_settings_inner().unwrap_or_default().current_cli_account_id))
+        .await
 }
 
 // ============================================================
@@ -261,13 +290,58 @@ fn get_usage_history_path() -> PathBuf {
     get_data_dir().join("usage-history.json")
 }
 
-fn get_usage_history_inner() -> Result<UsageHistory, String> {
-    let path = get_usage_history_path();
-    if !path.exists() {
-        return Ok(UsageHistory::default());
+fn load_usage_history_from_db() -> Result<UsageHistory, String> {
+    let conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT data FROM usage_history ORDER BY recorded_at")
+        .map_err(|e| format!("查询历史记录失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| format!("读取历史记录失败: {e}"))?;
+    let mut entries = Vec::new();
+    for data in rows.flatten() {
+        if let Ok(e) = serde_json::from_str::<UsageHistoryEntry>(&data) {
+            entries.push(e);
+        }
     }
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取历史记录失败: {e}"))?;
-    serde_json::from_str(&content).map_err(|e| format!("解析历史记录失败: {e}"))
+    Ok(UsageHistory { entries })
+}
+
+fn save_usage_history_to_db(history: &UsageHistory) -> Result<(), String> {
+    let mut conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+    tx.execute("DELETE FROM usage_history", [])
+        .map_err(|e| format!("清空历史记录失败: {e}"))?;
+    {
+        let mut stmt = tx
+            .prepare("INSERT INTO usage_history(account_id,recorded_at,data) VALUES(NULL,?1,?2)")
+            .map_err(|e| format!("准备插入失败: {e}"))?;
+        for e in &history.entries {
+            let data = serde_json::to_string(e).map_err(|err| format!("序列化失败: {err}"))?;
+            stmt.execute(rusqlite::params![e.date, data])
+                .map_err(|err| format!("写入历史记录失败: {err}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("提交事务失败: {e}"))
+}
+
+fn migrate_legacy_usage_history() -> Option<UsageHistory> {
+    let path = get_usage_history_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    let history: UsageHistory = serde_json::from_str(&content).ok()?;
+    let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+    Some(history)
+}
+
+fn get_usage_history_inner() -> Result<UsageHistory, String> {
+    let history = load_usage_history_from_db()?;
+    if history.entries.is_empty() {
+        if let Some(legacy) = migrate_legacy_usage_history() {
+            let _ = save_usage_history_to_db(&legacy);
+            return Ok(legacy);
+        }
+    }
+    Ok(history)
 }
 
 fn merge_usage_history_entry(history: &mut UsageHistory, entry: UsageHistoryEntry) {
@@ -289,15 +363,9 @@ fn merge_usage_history_entry(history: &mut UsageHistory, entry: UsageHistoryEntr
 }
 
 fn save_usage_history_entry_inner(entry: UsageHistoryEntry) -> Result<(), String> {
-    let path = get_usage_history_path();
-    ensure_parent_dir(&path)?;
-
     let mut history = get_usage_history_inner().unwrap_or_default();
     merge_usage_history_entry(&mut history, entry);
-
-    let content = serde_json::to_string_pretty(&history).map_err(|e| format!("序列化失败: {e}"))?;
-    std::fs::write(&path, content).map_err(|e| format!("写入失败: {e}"))?;
-    Ok(())
+    save_usage_history_to_db(&history)
 }
 
 #[tauri::command]
@@ -340,6 +408,105 @@ pub async fn clear_custom_kiro_path() -> Result<(), String> {
             ..Default::default()
         })
     }).await
+}
+
+// ============================================================
+// 远程 MCP 服务器 OAuth 凭证存储 (~/.kirohub/mcp-oauth.json)
+// 独立文件存储，便于后台刷新任务与本地反代直接读取，且天然向后兼容。
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpOAuthCred {
+    pub client_id: String,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: i64, // Unix 秒；0 表示未知
+    pub auth_endpoint: String,
+    pub token_endpoint: String,
+    pub mcp_endpoint: String, // 真实上游 MCP 地址，反代转发目标
+    pub resource: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpOAuthStore {
+    pub creds: std::collections::HashMap<String, McpOAuthCred>, // key = serverKey, 如 "notion"
+    pub proxy_port: Option<u16>,
+    #[serde(default)]
+    pub proxy_secret: Option<String>, // 本地反代路径密钥，防止本机其他进程盗用 token
+}
+
+fn get_mcp_oauth_path() -> PathBuf {
+    get_data_dir().join("mcp-oauth.json")
+}
+
+pub fn get_mcp_oauth_store() -> Result<McpOAuthStore, String> {
+    if let Some(json) = crate::db::kv_get("mcp_oauth", "store")? {
+        return serde_json::from_str(&json).map_err(|e| format!("解析 MCP OAuth 失败: {e}"));
+    }
+    if let Some(store) = migrate_legacy_mcp_oauth() {
+        let _ = save_mcp_oauth_store(&store);
+        return Ok(store);
+    }
+    Ok(McpOAuthStore::default())
+}
+
+pub fn save_mcp_oauth_store(store: &McpOAuthStore) -> Result<(), String> {
+    let content = serde_json::to_string(store).map_err(|e| format!("序列化失败: {e}"))?;
+    crate::db::kv_set("mcp_oauth", "store", &content)
+}
+
+fn migrate_legacy_mcp_oauth() -> Option<McpOAuthStore> {
+    let path = get_mcp_oauth_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    let store: McpOAuthStore = serde_json::from_str(&content).ok()?;
+    let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+    Some(store)
+}
+
+/// 写入/更新某个 serverKey 的凭证
+pub fn upsert_mcp_oauth_cred(server_key: &str, cred: McpOAuthCred) -> Result<(), String> {
+    let mut store = get_mcp_oauth_store().unwrap_or_default();
+    store.creds.insert(server_key.to_string(), cred);
+    save_mcp_oauth_store(&store)
+}
+
+/// 删除某个 serverKey 的凭证
+pub fn remove_mcp_oauth_cred(server_key: &str) -> Result<(), String> {
+    let mut store = get_mcp_oauth_store().unwrap_or_default();
+    store.creds.remove(server_key);
+    save_mcp_oauth_store(&store)
+}
+
+/// 确保反代端口与本地密钥已分配并持久化，返回 (port, secret)。
+/// 端口固定后写盘复用，保证 mcp.json 中的 URL 跨重启稳定。
+pub fn get_or_init_proxy_runtime() -> Result<(u16, String), String> {
+    let mut store = get_mcp_oauth_store().unwrap_or_default();
+    let mut changed = false;
+    if store.proxy_port.is_none() {
+        // 绑定 0 让系统分配一个空闲端口，记录后复用
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("分配反代端口失败: {e}"))?;
+        store.proxy_port = Some(
+            listener
+                .local_addr()
+                .map_err(|e| format!("获取端口失败: {e}"))?
+                .port(),
+        );
+        changed = true;
+    }
+    if store.proxy_secret.is_none() {
+        store.proxy_secret = Some(uuid::Uuid::new_v4().simple().to_string());
+        changed = true;
+    }
+    if changed {
+        save_mcp_oauth_store(&store)?;
+    }
+    Ok((
+        store.proxy_port.expect("port set above"),
+        store.proxy_secret.expect("secret set above"),
+    ))
 }
 
 

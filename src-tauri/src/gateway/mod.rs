@@ -12,6 +12,14 @@ mod stream;
 mod thinking_parser;
 mod token_cache;
 mod token_estimator;
+mod config;
+mod request_log;
+mod stats;
+mod paths;
+pub(crate) use config::*;
+pub(crate) use request_log::*;
+pub(crate) use stats::*;
+pub(crate) use paths::*;
 
 use axum::{
     extract::{ConnectInfo, State},
@@ -26,9 +34,8 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fs,
-    io::{BufRead, BufReader, Write},
     net::{IpAddr, SocketAddr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -44,6 +51,11 @@ use tokio::{
 
 use crate::clients::http_client::{build_streaming_http_client, is_supported_kiro_region};
 use crate::gateway::token_cache::TokenCache;
+
+#[cfg(test)]
+use std::io::{BufRead, BufReader, Write};
+#[cfg(test)]
+use std::path::Path;
 
 #[cfg(test)]
 thread_local! {
@@ -155,53 +167,6 @@ pub struct ModelMappingRule {
 fn default_true_val() -> bool { true }
 fn default_mapping_type() -> String { "replace".to_string() }
 
-/// 根据模型映射规则解析实际模型名
-pub fn resolve_model_mapping(config: &GatewayConfig, requested_model: &str) -> String {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static ROUND_ROBIN: AtomicUsize = AtomicUsize::new(0);
-
-    for rule in &config.model_mappings {
-        if !rule.enabled {
-            continue;
-        }
-        if rule.source_model != requested_model {
-            continue;
-        }
-        if rule.target_models.is_empty() {
-            continue;
-        }
-
-        match rule.rule_type.as_str() {
-            "replace" | "alias" => {
-                return rule.target_models[0].clone();
-            }
-            "loadbalance" => {
-                if rule.weights.is_empty() || rule.weights.len() != rule.target_models.len() {
-                    // 无权重或权重数量不匹配，简单轮询
-                    let idx = ROUND_ROBIN.fetch_add(1, Ordering::Relaxed) % rule.target_models.len();
-                    return rule.target_models[idx].clone();
-                }
-                // 加权轮询
-                let total_weight: u32 = rule.weights.iter().sum();
-                if total_weight == 0 {
-                    return rule.target_models[0].clone();
-                }
-                let tick = ROUND_ROBIN.fetch_add(1, Ordering::Relaxed) as u32 % total_weight;
-                let mut cumulative = 0u32;
-                for (i, &w) in rule.weights.iter().enumerate() {
-                    cumulative += w;
-                    if tick < cumulative {
-                        return rule.target_models[i].clone();
-                    }
-                }
-                return rule.target_models[0].clone();
-            }
-            _ => {}
-        }
-    }
-
-    requested_model.to_string()
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -314,9 +279,10 @@ enum ResponseFormat {
     OpenAI,
 }
 
-const CONFIG_DIR: &str = ".kiro-account-manager";
+const CONFIG_DIR: &str = ".kirohub";
 const CONFIG_FILE: &str = "gateway-config.json";
 const LOGS_DIR: &str = "logs";
+#[cfg(test)]
 const REQUEST_LOG_FILE: &str = "gateway-request-log.jsonl";
 const DEFAULT_AGENT_MODE: &str = "q-developer-converse";
 
@@ -352,26 +318,6 @@ fn default_log_level() -> String {
     "debug".to_string()
 }
 
-fn build_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
-    let normalized = host.trim();
-    if normalized.is_empty() {
-        return Err("监听地址不能为空".to_string());
-    }
-
-    if normalized.eq_ignore_ascii_case("localhost") {
-        return Ok(SocketAddr::from(([127, 0, 0, 1], port)));
-    }
-
-    let bind_target = if normalized.contains(':') {
-        format!("[{normalized}]:{port}")
-    } else {
-        format!("{normalized}:{port}")
-    };
-
-    bind_target
-        .parse::<SocketAddr>()
-        .map_err(|e| format!("监听地址无效: {e}"))
-}
 
 impl Default for GatewayConfig {
     fn default() -> Self {
@@ -402,33 +348,6 @@ impl Default for GatewayConfig {
     }
 }
 
-pub(crate) fn effective_client_api_keys(config: &GatewayConfig) -> Vec<String> {
-    let mut keys = Vec::new();
-
-    if let Some(key) = config
-        .access_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter(|value| !value.starts_with("#disabled#")) // 过滤禁用的 Key
-    {
-        keys.push(key.to_string());
-    }
-
-    for key in config
-        .client_api_keys
-        .iter()
-        .map(|item| item.trim())
-        .filter(|item| !item.is_empty())
-        .filter(|item| !item.starts_with("#disabled#")) // 过滤禁用的 Key
-    {
-        if !keys.iter().any(|existing| existing == key) {
-            keys.push(key.to_string());
-        }
-    }
-
-    keys
-}
 
 impl GatewayStatus {
     pub fn stopped(config: &GatewayConfig) -> Self {
@@ -443,439 +362,39 @@ impl GatewayStatus {
     }
 }
 
-fn ensure_config_valid(config: &GatewayConfig) -> Result<(), String> {
-    build_bind_addr(&config.host, config.port)?;
-    if config.port == 0 {
-        return Err("端口必须大于 0".to_string());
-    }
 
-    let region = config.region.trim();
-    if region.is_empty() {
-        return Err("region 不能为空".to_string());
-    }
-    if !is_supported_kiro_region(region) {
-        return Err(format!("region 不受支持: {region}"));
-    }
-    match config.account_mode.as_str() {
-        "single"
-            if config
-                .account_id
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .is_empty() =>
-        {
-            return Err("single 模式必须选择账号".to_string());
-        }
-        "group"
-            if config
-                .group_id
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .is_empty() =>
-        {
-            return Err("group 模式必须选择分组".to_string());
-        }
-        "single" | "group" | "pool" => {}
-        "local" => {
-            return Err("反代不再支持 local 模式，请改用 single/group/pool 账号池模式".to_string());
-        }
-        _ => return Err("accountMode 必须是 single/group/pool".to_string()),
-    }
-    if !matches!(
-        config.log_level.as_str(),
-        "debug" | "info" | "warn" | "error"
-    ) {
-        return Err("logLevel 必须是 debug/info/warn/error".to_string());
-    }
-    if effective_client_api_keys(config).is_empty() {
-        return Err("必须配置客户端 API Key".to_string());
-    }
-    if !config.local_only && config.allowed_ips.is_empty() {
-        return Err("允许远程访问时必须至少配置一个白名单来源 IP".to_string());
-    }
-    for entry in &config.allowed_ips {
-        if !is_valid_allowlist_entry(entry) {
-            return Err(format!("白名单条目无效: {entry}"));
-        }
-    }
-    Ok(())
-}
 
-fn is_valid_allowlist_entry(entry: &str) -> bool {
-    let trimmed = entry.trim();
-    !trimmed.is_empty()
-        && (trimmed.parse::<IpAddr>().is_ok() || trimmed.parse::<ipnet::IpNet>().is_ok())
-}
 
-fn normalize_config(config: &GatewayConfig) -> GatewayConfig {
-    let mut normalized = config.clone();
-    normalized.host = normalized.host.trim().to_string();
-    normalized.access_token = normalized
-        .access_token
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    normalized.region = normalized.region.trim().to_string();
-    normalized.account_mode = normalized.account_mode.trim().to_string();
-    normalized.strategy = normalized.strategy.trim().to_string();
-    normalized.log_level = normalized.log_level.trim().to_ascii_lowercase();
-    normalized.client_api_keys = effective_client_api_keys(&normalized);
-    normalized.access_token = normalized.client_api_keys.first().cloned();
-    normalized.allowed_ips = normalized
-        .allowed_ips
-        .iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .fold(Vec::new(), |mut acc, item| {
-            if !acc.contains(&item) {
-                acc.push(item);
-            }
-            acc
-        });
-    normalized
-}
 
-fn config_path() -> Result<PathBuf, String> {
-    Ok(ensure_gateway_data_dir()?.join(CONFIG_FILE))
-}
 
-fn request_log_path() -> Result<PathBuf, String> {
-    #[cfg(test)]
-    if let Some(path) = request_log_path_override() {
-        return Ok(path);
-    }
-    Ok(gateway_log_dir_raw()?.join(REQUEST_LOG_FILE))
-}
 
-fn append_gateway_request_log_to_path(
-    path: &Path,
-    entry: &GatewayRequestLogEntry,
-) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建请求日志目录失败: {e}"))?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("打开请求日志失败: {e}"))?;
-    let serialized =
-        serde_json::to_string(entry).map_err(|e| format!("序列化请求日志失败: {e}"))?;
-    writeln!(file, "{serialized}").map_err(|e| format!("写入请求日志失败: {e}"))
-}
 
-fn get_gateway_request_logs_from_path(
-    path: &Path,
-    limit: Option<usize>,
-) -> Result<Vec<GatewayRequestLogEntry>, String> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
 
-    let file = fs::File::open(path).map_err(|e| format!("读取请求日志失败: {e}"))?;
-    let reader = BufReader::new(file);
-    let max_items = limit.unwrap_or(100).clamp(1, 500);
-    let mut entries = Vec::new();
+// ===== 请求日志：SQLite 持久化（§9.1 异步批量写）=====
 
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(entry) = serde_json::from_str::<GatewayRequestLogEntry>(trimmed) {
-            entries.push(entry);
-        }
-    }
+static REQUEST_LOG_TX: std::sync::OnceLock<
+    tokio::sync::mpsc::UnboundedSender<GatewayRequestLogEntry>,
+> = std::sync::OnceLock::new();
 
-    let start = entries.len().saturating_sub(max_items);
-    let mut recent = entries.split_off(start);
-    recent.reverse();
-    Ok(recent)
-}
 
-fn clear_gateway_request_logs_at_path(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Ok(());
-    }
 
-    fs::remove_file(path).map_err(|e| format!("清空请求日志失败: {e}"))
-}
 
-fn gateway_data_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".to_string());
-            PathBuf::from(home)
-        })
-        .join(CONFIG_DIR)
-}
 
-fn ensure_gateway_data_dir() -> Result<PathBuf, String> {
-    let dir = gateway_data_dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    Ok(dir)
-}
 
-fn gateway_log_dir_raw() -> Result<PathBuf, String> {
-    let dir = ensure_gateway_data_dir()?.join(LOGS_DIR);
-    fs::create_dir_all(&dir).map_err(|e| format!("创建日志目录失败: {e}"))?;
-    Ok(dir)
-}
 
-pub fn load_gateway_config() -> Result<GatewayConfig, String> {
-    let path = config_path()?;
-    if !path.exists() {
-        return Ok(GatewayConfig::default());
-    }
 
-    let content = fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {e}"))?;
-    let cfg = serde_json::from_str::<GatewayConfig>(&content)
-        .map_err(|e| format!("解析配置失败: {e}"))?;
-    Ok(normalize_config(&cfg))
-}
 
-pub fn get_gateway_config() -> Result<GatewayConfig, String> {
-    load_gateway_config()
-}
 
-pub fn save_gateway_config(config: &GatewayConfig) -> Result<(), String> {
-    let normalized = normalize_config(config);
-    ensure_config_valid(&normalized)?;
-    let path = config_path()?;
-    let content =
-        serde_json::to_string_pretty(&normalized).map_err(|e| format!("序列化配置失败: {e}"))?;
-    fs::write(path, content).map_err(|e| format!("写入配置失败: {e}"))
-}
 
-pub fn append_gateway_request_log(entry: &GatewayRequestLogEntry) -> Result<(), String> {
-    let path = request_log_path()?;
-    append_gateway_request_log_to_path(&path, entry)
-}
 
-pub async fn get_gateway_request_logs(
-    state: &tauri::State<'_, crate::state::AppState>,
-    limit: Option<usize>,
-) -> Result<Vec<GatewayRequestLogEntry>, String> {
-    // 尝试从运行中的 gateway 的内存存储获取
-    let log_store_opt = {
-        let guard = state
-            .gateway
-            .lock()
-            .map_err(|_| "获取 gateway 状态失败".to_string())?;
 
-        guard.as_ref().map(|rt| rt.log_store.clone())
-    };
 
-    if let Some(log_store) = log_store_opt {
-        // 从内存存储获取
-        let logs = log_store.get_last(limit.unwrap_or(50)).await;
-        return Ok(logs);
-    }
 
-    // 如果 gateway 未运行，从文件读取
-    let path = request_log_path()?;
-    get_gateway_request_logs_from_path(&path, limit)
-}
 
-pub async fn get_gateway_request_stats(
-    state: &tauri::State<'_, crate::state::AppState>,
-) -> Result<GatewayRequestStats, String> {
-    // 尝试从运行中的 gateway 的内存存储获取
-    let log_store_opt = {
-        let guard = state
-            .gateway
-            .lock()
-            .map_err(|_| "获取 gateway 状态失败".to_string())?;
 
-        guard.as_ref().map(|rt| rt.log_store.clone())
-    };
 
-    if let Some(log_store) = log_store_opt {
-        // 从内存存储获取统计
-        let stats = log_store.get_stats().await;
-        let all_logs = log_store.get_all().await;
 
-        // 计算最大延迟
-        let max_duration_ms = all_logs.iter()
-            .map(|log| log.duration_ms)
-            .max()
-            .unwrap_or(0);
 
-        return Ok(GatewayRequestStats {
-            total: stats.total,
-            success: stats.success,
-            error: stats.error,
-            streaming: stats.streaming,
-            total_input_tokens: stats.total_input_tokens as i64,
-            total_output_tokens: stats.total_output_tokens as i64,
-            total_cache_read_tokens: stats.total_cache_read_tokens as i64,
-            total_cache_creation_tokens: stats.total_cache_creation_tokens as i64,
-            requests_with_cache: stats.requests_with_cache,
-            max_duration_ms,
-            avg_duration_ms: stats.avg_duration_ms,
-        });
-    }
-
-    // 如果 gateway 未运行，从文件读取
-    let path = request_log_path()?;
-    get_gateway_request_stats_from_path(&path)
-}
-
-pub async fn get_gateway_model_stats(
-    state: &tauri::State<'_, crate::state::AppState>,
-) -> Result<Vec<log_store::ModelStat>, String> {
-    let log_store_opt = {
-        let guard = state
-            .gateway
-            .lock()
-            .map_err(|_| "获取 gateway 状态失败".to_string())?;
-
-        guard.as_ref().map(|rt| rt.log_store.clone())
-    };
-
-    if let Some(log_store) = log_store_opt {
-        return Ok(log_store.get_model_stats().await);
-    }
-
-    Ok(Vec::new())
-}
-
-pub async fn get_gateway_endpoint_stats(
-    state: &tauri::State<'_, crate::state::AppState>,
-) -> Result<Vec<log_store::EndpointStat>, String> {
-    let log_store_opt = {
-        let guard = state
-            .gateway
-            .lock()
-            .map_err(|_| "获取 gateway 状态失败".to_string())?;
-
-        guard.as_ref().map(|rt| rt.log_store.clone())
-    };
-
-    if let Some(log_store) = log_store_opt {
-        return Ok(log_store.get_endpoint_stats().await);
-    }
-
-    Ok(Vec::new())
-}
-
-fn get_gateway_request_stats_from_path(path: &Path) -> Result<GatewayRequestStats, String> {
-    if !path.exists() {
-        return Ok(GatewayRequestStats {
-            total: 0,
-            success: 0,
-            error: 0,
-            streaming: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_read_tokens: 0,
-            total_cache_creation_tokens: 0,
-            requests_with_cache: 0,
-            max_duration_ms: 0,
-            avg_duration_ms: 0,
-        });
-    }
-
-    let file = fs::File::open(path).map_err(|e| format!("读取请求日志失败: {e}"))?;
-    let reader = BufReader::new(file);
-
-    let mut total = 0;
-    let mut success = 0;
-    let mut error = 0;
-    let mut streaming = 0;
-    let mut total_input_tokens: i64 = 0;
-    let mut total_output_tokens: i64 = 0;
-    let mut total_cache_read_tokens: i64 = 0;
-    let mut total_cache_creation_tokens: i64 = 0;
-    let mut requests_with_cache = 0;
-    let mut max_duration_ms = 0u64;
-    let mut total_duration_ms = 0u64;
-
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(entry) = serde_json::from_str::<GatewayRequestLogEntry>(trimmed) {
-            total += 1;
-
-            if entry.status_code < 400 {
-                success += 1;
-            } else {
-                error += 1;
-            }
-
-            if entry.stream {
-                streaming += 1;
-            }
-
-            total_input_tokens += entry.input_tokens.unwrap_or(0) as i64;
-            total_output_tokens += entry.output_tokens.unwrap_or(0) as i64;
-            total_cache_read_tokens += entry.cache_read_input_tokens.unwrap_or(0) as i64;
-            total_cache_creation_tokens += entry.cache_creation_input_tokens.unwrap_or(0) as i64;
-
-            if entry.cache_read_input_tokens.unwrap_or(0) > 0
-                || entry.cache_creation_input_tokens.unwrap_or(0) > 0 {
-                requests_with_cache += 1;
-            }
-
-            max_duration_ms = max_duration_ms.max(entry.duration_ms);
-            total_duration_ms += entry.duration_ms;
-        }
-    }
-
-    let avg_duration_ms = if total > 0 {
-        total_duration_ms / total as u64
-    } else {
-        0
-    };
-
-    Ok(GatewayRequestStats {
-        total,
-        success,
-        error,
-        streaming,
-        total_input_tokens,
-        total_output_tokens,
-        total_cache_read_tokens,
-        total_cache_creation_tokens,
-        requests_with_cache,
-        max_duration_ms,
-        avg_duration_ms,
-    })
-}
-
-pub async fn clear_gateway_request_logs(
-    state: &tauri::State<'_, crate::state::AppState>,
-) -> Result<(), String> {
-    // 清空内存存储
-    let log_store_opt = {
-        let guard = state
-            .gateway
-            .lock()
-            .map_err(|_| "获取 gateway 状态失败".to_string())?;
-
-        guard.as_ref().map(|rt| rt.log_store.clone())
-    };
-
-    if let Some(log_store) = log_store_opt {
-        log_store.clear().await;
-    }
-
-    // 清空文件
-    let path = request_log_path()?;
-    clear_gateway_request_logs_at_path(&path)
-}
 
 pub async fn start_gateway(
     state: &tauri::State<'_, crate::state::AppState>,
@@ -995,17 +514,15 @@ async fn spawn_runtime(config: GatewayConfig) -> Result<GatewayRuntime, String> 
     // 初始化内存日志存储（保存最近 10000 条日志）
     let log_store = Arc::new(log_store::LogStore::new(10000));
 
-    // 从文件加载历史日志到内存（启动时恢复）
-    if let Ok(path) = request_log_path() {
-        if let Ok(history) = get_gateway_request_logs_from_path(&path, Some(500)) {
-            let store_clone = log_store.clone();
-            tokio::spawn(async move {
-                // 历史日志是倒序的（最新在前），需要反转后逐条添加
-                for entry in history.into_iter().rev() {
-                    store_clone.add(entry).await;
-                }
-            });
-        }
+    // 从 SQLite 加载历史日志到内存（启动时恢复）
+    if let Ok(history) = get_gateway_request_logs_from_db(Some(500)) {
+        let store_clone = log_store.clone();
+        tokio::spawn(async move {
+            // 历史日志是倒序的（最新在前），需要反转后逐条添加
+            for entry in history.into_iter().rev() {
+                store_clone.add(entry).await;
+            }
+        });
     }
 
     // 初始化响应缓存
@@ -1015,7 +532,7 @@ async fn spawn_runtime(config: GatewayConfig) -> Result<GatewayRuntime, String> 
         ..response_cache::CacheConfig::default()
     };
     let cache_dir = dirs::data_dir()
-        .map(|p| p.join(".kiro-account-manager").join("cache"));
+        .map(|p| p.join(".kirohub").join("cache"));
     let response_cache = Arc::new(AsyncMutex::new(response_cache::ResponseCache::new(
         cache_config,
         cache_dir,
@@ -1087,19 +604,8 @@ pub async fn auto_start_if_enabled(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn gateway_log_dir(_app: &AppHandle) -> Result<PathBuf, String> {
-    gateway_log_dir_raw()
-}
 
-pub fn get_gateway_log_dir(app: &AppHandle) -> Result<String, String> {
-    gateway_log_dir(app).map(|path| path.to_string_lossy().to_string())
-}
 
-pub fn open_gateway_log_dir(app: &AppHandle) -> Result<String, String> {
-    let dir = gateway_log_dir(app)?;
-    open::that(&dir).map_err(|e| format!("打开日志目录失败: {e}"))?;
-    Ok(dir.to_string_lossy().to_string())
-}
 
 async fn health_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -1601,7 +1107,13 @@ mod tests {
             .json()
             .await
             .expect("count tokens response should be json");
-        assert_eq!(payload.get("input_tokens").and_then(Value::as_u64), Some(2));
+        assert!(
+            payload
+                .get("input_tokens")
+                .and_then(Value::as_u64)
+                .is_some_and(|n| n >= 2),
+            "count_tokens 应返回正的 token 估算（对整个请求体保守估算）"
+        );
         stop_runtime(&mut runtime).await;
     }
 
@@ -1745,7 +1257,7 @@ mod tests {
         let mut runtime = spawn_runtime(config).await.expect("runtime should start");
 
         let response = reqwest::Client::new()
-            .post(format!("http://127.0.0.1:{port}/messages"))
+            .post(format!("http://127.0.0.1:{port}/v1/messages"))
             .header("content-type", "application/json")
             .body(
                 json!({

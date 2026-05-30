@@ -5,7 +5,7 @@ import { dismissBootSplash } from './bootSplash.js'
 test('dismissBootSplash marks splash hidden and removes it', () => {
   let removed = false
   const splash = {
-    dataset: {},
+    dataset: {} as Record<string, string>,
     remove() {
       removed = true
     }}

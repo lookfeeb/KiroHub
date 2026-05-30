@@ -96,10 +96,9 @@ export const buildGatewayConnectHost = (host: string, localOnly: boolean): strin
   const value = String(host || '').trim()
   if (!value) {
     return '127.0.0.1'
-  if (value === '0.0.0.0' || value === '::') {
-    return localOnly ? '127.0.0.1' : '<局域网IP>'
   }
-    return localOnly ? '127.0.0.1' : '<局域网IP>'
+  if (value === '0.0.0.0' || value === '::') {
+    return localOnly ? '127.0.0.1' : 'localhost'
   }
 
   return value
@@ -473,6 +472,7 @@ export const formatGatewayRequestDuration = (durationMs: number): string => {
 export const getGatewayRequestOutcomeColor = (outcome: string): string => {
   if (outcome === 'success') return 'teal'
   if (outcome === 'stream') return 'blue'
+  if (outcome === 'cached') return 'purple'
   if (outcome === 'error') return 'red'
   return 'gray'
 }
@@ -482,6 +482,7 @@ export const buildGatewayRequestLogSummary = (entries: any) => {
   const errors = logs.filter(item => item?.outcome === 'error').length
   const streaming = logs.filter(item => item?.outcome === 'stream').length
   const success = logs.filter(item => item?.outcome === 'success').length
+  const cached = logs.filter(item => item?.outcome === 'cached').length
   const maxDuration = logs.reduce((max, item) => Math.max(max, Number(item?.durationMs || 0)), 0)
   const latestOccurredAt = logs[0]?.occurredAt || '-'
 
@@ -528,6 +529,7 @@ export const buildGatewayRequestLogSummary = (entries: any) => {
     errors,
     streaming,
     success,
+    cached,
     successRateLabel,
     errorRateLabel,
     maxDurationLabel: formatGatewayRequestDuration(maxDuration),
@@ -583,7 +585,7 @@ export const buildGatewayMetricsSummary = (entries: any) => {
     }
   }
 
-  const outcomeCounts = { success: 0, stream: 0, error: 0, other: 0 }
+  const outcomeCounts = { success: 0, stream: 0, cached: 0, error: 0, other: 0 }
   const modelCounts: Record<string, number> = {}
   const upstreamCounts: Record<string, number> = {}
   const statusCounts: Record<string, number> = {}

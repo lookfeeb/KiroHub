@@ -2,8 +2,9 @@
 // 参考 Kiro IDE 源码实现
 
 use crate::commands::common::{
-    apply_refreshed_account_tokens, is_auth_error_message, is_token_expired,
-    refresh_token_by_provider, token_needs_refresh, REFRESH_LOOP_INTERVAL_SECONDS,
+    apply_refreshed_account_tokens, get_usage_by_provider, is_auth_error_message, is_token_expired,
+    refresh_token_by_provider, token_needs_refresh, update_account_status,
+    REFRESH_LOOP_INTERVAL_SECONDS,
 };
 use crate::state::AppState;
 use tauri::{AppHandle, Emitter, Manager};
@@ -30,6 +31,14 @@ impl TokenRefreshService {
 
                 if let Err(e) = self.refresh_expiring_tokens().await {
                     log::error!("Token refresh loop error: {}", e);
+                }
+
+                if let Err(e) = self.refresh_reset_due_quotas().await {
+                    log::error!("Reset-due quota refresh error: {}", e);
+                }
+
+                if let Err(e) = self.refresh_active_quotas().await {
+                    log::error!("Active quota check error: {}", e);
                 }
             }
         });
@@ -157,6 +166,172 @@ impl TokenRefreshService {
         }
 
         // 本轮有任何账号被刷新/失效，通知前端重新加载列表
+        if any_changed {
+            let _ = self.app_handle.emit("accounts-updated", ());
+        }
+
+        Ok(())
+    }
+
+    /// 重置时间到期的账号：刷新配额+token，有配额则自动启用
+    async fn refresh_reset_due_quotas(&self) -> Result<(), String> {
+        let accounts = {
+            let state = self.app_handle.state::<AppState>();
+            let mut store = state
+                .store
+                .lock()
+                .map_err(|_| "Failed to acquire account store lock".to_string())?;
+            store.reload();
+            store.accounts.clone()
+        };
+
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut any_changed = false;
+
+        for account in accounts {
+            if account.status == "invalid" || account.status == "banned" {
+                continue;
+            }
+
+            // 仅处理重置时间已到的账号（nextDateReset 为秒级时间戳）
+            let reset_due = account
+                .usage_data
+                .as_ref()
+                .and_then(|d| d.get("nextDateReset"))
+                .and_then(serde_json::Value::as_i64)
+                .map(|ts| now_ts >= ts)
+                .unwrap_or(false);
+            if !reset_due {
+                continue;
+            }
+
+            let Some(provider) = account.provider.clone() else {
+                continue;
+            };
+
+            // 先刷新 token，确保用有效的 access_token 拉配额
+            let access_token = match refresh_token_by_provider(&account).await {
+                Ok(refresh_result) => {
+                    let token = refresh_result.access_token.clone();
+                    let state = self.app_handle.state::<AppState>();
+                    let mut store = state
+                        .store
+                        .lock()
+                        .map_err(|_| "Failed to acquire account store lock".to_string())?;
+                    store.reload();
+                    if let Some(acc) = store.accounts.iter_mut().find(|a| a.id == account.id) {
+                        apply_refreshed_account_tokens(acc, &refresh_result);
+                        let _ = store.try_save_to_file();
+                    }
+                    token
+                }
+                Err(_) => match account.access_token.clone() {
+                    Some(t) => t,
+                    None => continue,
+                },
+            };
+
+            // 拉取最新配额，更新状态并按配额自动启用/禁用
+            if let Ok(usage) = get_usage_by_provider(&provider, &access_token).await {
+                let state = self.app_handle.state::<AppState>();
+                let mut store = state
+                    .store
+                    .lock()
+                    .map_err(|_| "Failed to acquire account store lock".to_string())?;
+                store.reload();
+                if let Some(acc) = store.accounts.iter_mut().find(|a| a.id == account.id) {
+                    acc.usage_data = Some(usage.usage_data);
+                    // update_account_status 会在 capped/banned/invalid 时自动禁用
+                    update_account_status(acc, usage.is_banned, usage.is_auth_error);
+                    // 重置后若恢复可用（正常/超额）且当前被禁用，则自动启用
+                    if matches!(acc.status.as_str(), "active" | "overage") && !acc.enabled {
+                        acc.enabled = true;
+                    }
+                    let _ = store.try_save_to_file();
+                    any_changed = true;
+                }
+            }
+        }
+
+        if any_changed {
+            let _ = self.app_handle.emit("accounts-updated", ());
+        }
+
+        Ok(())
+    }
+
+    /// 配额巡检：对启用中的账号定期拉取配额并重算状态，
+    /// 配额耗尽（capped）时自动禁用。每账号最多每 10 分钟拉一次，避免限流。
+    async fn refresh_active_quotas(&self) -> Result<(), String> {
+        const QUOTA_CHECK_INTERVAL_SECONDS: i64 = 600;
+
+        let accounts = {
+            let state = self.app_handle.state::<AppState>();
+            let mut store = state
+                .store
+                .lock()
+                .map_err(|_| "Failed to acquire account store lock".to_string())?;
+            store.reload();
+            store.accounts.clone()
+        };
+
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut any_changed = false;
+
+        for account in accounts {
+            // 只巡检启用中、状态有效的账号；invalid/banned 跳过
+            if !account.enabled || account.status == "invalid" || account.status == "banned" {
+                continue;
+            }
+
+            // 已到重置时间的交给 refresh_reset_due_quotas 处理，避免重复拉取
+            let reset_due = account
+                .usage_data
+                .as_ref()
+                .and_then(|d| d.get("nextDateReset"))
+                .and_then(serde_json::Value::as_i64)
+                .map(|ts| now_ts >= ts)
+                .unwrap_or(false);
+            if reset_due {
+                continue;
+            }
+
+            // 节流：距上次巡检不足 10 分钟则跳过
+            let throttled = account
+                .last_quota_check_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|t| now_ts - t.timestamp() < QUOTA_CHECK_INTERVAL_SECONDS)
+                .unwrap_or(false);
+            if throttled {
+                continue;
+            }
+
+            let (Some(provider), Some(access_token)) =
+                (account.provider.clone(), account.access_token.clone())
+            else {
+                continue;
+            };
+
+            // 用现有有效 token 拉配额（token 临近过期由 refresh_expiring_tokens 负责）
+            if let Ok(usage) = get_usage_by_provider(&provider, &access_token).await {
+                let state = self.app_handle.state::<AppState>();
+                let mut store = state
+                    .store
+                    .lock()
+                    .map_err(|_| "Failed to acquire account store lock".to_string())?;
+                store.reload();
+                if let Some(acc) = store.accounts.iter_mut().find(|a| a.id == account.id) {
+                    acc.usage_data = Some(usage.usage_data);
+                    // update_account_status 会在 capped/banned/invalid 时自动禁用
+                    update_account_status(acc, usage.is_banned, usage.is_auth_error);
+                    acc.last_quota_check_at = Some(chrono::Utc::now().to_rfc3339());
+                    let _ = store.try_save_to_file();
+                    any_changed = true;
+                }
+            }
+        }
+
         if any_changed {
             let _ = self.app_handle.emit("accounts-updated", ());
         }

@@ -1,7 +1,7 @@
 export interface IdeSession {
   sessionId: string
   title: string
-  sessionType: 'vibe' | 'spec'
+  sessionType: string
   workspaceDirectory: string
   history: HistoryItem[]
   conversationSummary?: string
@@ -10,13 +10,14 @@ export interface IdeSession {
 export interface SessionSummary {
   sessionId: string
   title: string
-  sessionType: 'vibe' | 'spec'
+  sessionType: string
   workspaceDirectory: string
   workspaceHash: string
   messageCount: number
   fileSize: number
   createdAt?: number
   modifiedAt?: number
+  source?: 'ide' | 'cli'
 }
 
 export interface HistoryItem {

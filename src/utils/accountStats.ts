@@ -77,6 +77,28 @@ const getUsed = (a) => {
 const getSubType = (a) => a.usageData?.subscriptionInfo?.type ?? a.subscriptionType ?? ''
 const getSubPlan = (a) => a.usageData?.subscriptionInfo?.subscriptionTitle ?? a.subscriptionPlan ?? ''
 
+// 账号是否开启了超额（透支）
+const isOverageEnabled = (a) => {
+  const u = a.usageData
+  return u?.subscriptionInfo?.overageCapability === 'OVERAGE_CAPABLE'
+    && u?.overageConfiguration?.overageStatus === 'ENABLED'
+}
+
+// 合并配额信息：开启超额(透支)时把超额上限并入总配额，使用量并入超额用量
+const getMergedQuota = (a) => {
+  const breakdown = getBreakdown(a)
+  const overageEnabled = isOverageEnabled(a)
+  const baseQuota = getQuota(a)
+  const baseUsed = getUsed(a)
+  const overageCap = breakdown?.overageCapWithPrecision ?? breakdown?.overageCap ?? 0
+  const overageUsed = breakdown?.currentOveragesWithPrecision ?? breakdown?.currentOverages ?? 0
+  const quota = overageEnabled ? baseQuota + overageCap : baseQuota
+  const used = overageEnabled ? baseUsed + overageUsed : baseUsed
+  const remaining = Math.max(0, quota - used)
+  const percent = quota > 0 ? Math.round((used / quota) * 100) : 0
+  return { quota, used, remaining, percent, overageEnabled, baseQuota, baseUsed, overageCap, overageUsed }
+}
+
 export function calcAccountStats(accounts) {
   const total = accounts.length
   const active = accounts.filter(a => isActiveStatus(a)).length
@@ -106,4 +128,4 @@ export function getUsagePercent(used, quota) {
   return quota === 0 ? 0 : Math.min(100, (used / quota) * 100)
 }
 
-export { getQuota, getUsed, getSubType, getSubPlan, formatUsage }
+export { getQuota, getUsed, getSubType, getSubPlan, formatUsage, getMergedQuota, isOverageEnabled }
