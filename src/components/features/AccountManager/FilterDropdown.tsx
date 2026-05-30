@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Filter, X } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../../../i18n'
 import SearchableTagSelect from './SearchableTagSelect'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
 

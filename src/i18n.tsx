@@ -1,35 +1,28 @@
-import { useEffect, useState } from 'react'
-import i18n from 'i18next'
-import { initReactI18next, I18nextProvider } from 'react-i18next'
+import type { ReactNode } from 'react'
+import { messages } from './locales/zh-CN'
 
-// 从 JSON 文件导入翻译
-import zhCN from '../locales/zh-CN.json'
+export type TFunc = (key: string, vars?: Record<string, string | number>) => string
 
-// 初始化 i18n（仅中文）
-i18n
-  .use(initReactI18next)
-  .init({
-    lng: 'zh-CN',
-    fallbackLng: 'zh-CN',
-    supportedLngs: ['zh-CN'],
+const NESTED = /\$t\(([^)]+)\)/g
+const INTERP = /\{\{\s*(\w+)\s*\}\}/g
 
-    resources: {
-      'zh-CN': { translation: zhCN }
-    },
-
-    interpolation: {
-      escapeValue: false
-    },
-
-    react: {
-      useSuspense: false
-    }
-  })
-
-// I18nProvider 组件
-function I18nProvider({ children }) {
-  return <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+// 本地极简翻译：查表 → 解析 $t() 嵌套 → 填充 {{var}}
+export const t: TFunc = (key, vars) => {
+  let s = messages[key]
+  if (s == null) return key
+  s = s.replace(NESTED, (_m, k: string) => messages[k.trim()] ?? k.trim())
+  if (vars) s = s.replace(INTERP, (_m, name: string) => (vars[name] != null ? String(vars[name]) : `{{${name}}}`))
+  return s
 }
 
-export { I18nProvider }
-export default i18n
+// 兼容旧的 react-i18next 调用方式
+export function useTranslation() {
+  return { t, i18n: { language: 'zh-CN', changeLanguage: async () => {} } }
+}
+
+// 透传 Provider，保持 main.tsx 不变
+export function I18nProvider({ children }: { children: ReactNode }) {
+  return <>{children}</>
+}
+
+export default { t }

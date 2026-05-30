@@ -454,47 +454,43 @@ function GatewayPage() {
         <GatewayDataProvider>
             <div className={`h-full overflow-y-auto p-3 glass-main`}>
               <Stack gap="sm">
-                <Card className={`glass-card border border-border rounded-xl p-3`}>
+                <Card className={`glass-card border border-border rounded-xl p-3.5`}>
           <Stack gap="sm">
             <Group justify="space-between" align="center">
               <Group gap="xs">
+                <span className={`relative flex h-2.5 w-2.5`}>
+                  {status.running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500/70" />}
+                  <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${status.running ? 'bg-green-500' : 'bg-gray-400'}`} />
+                </span>
                 <Text fw={700} className="text-foreground text-base">Kiro API 反代</Text>
-                {!status.running ? (
-                  <Button
-                    size="sm"
-                    onClick={handleStart}
-                    disabled={hasFieldErrors || saving || loading}
-                    className="bg-green-500 hover:bg-green-600 text-white h-7 px-2.5 text-xs"
-                  >
-                    <Play size={12} className="mr-1" />
-                    启动
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={handleStop}
-                    disabled={saving || loading}
-                    className="bg-red-500 hover:bg-red-600 text-white h-7 px-2.5 text-xs"
-                  >
-                    <Square size={12} className="mr-1" />
-                    停止
-                  </Button>
-                )}
-                <Badge color={status.running ? 'green' : 'gray'}>{status.running ? '运行中' : '已停止'}</Badge>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${status.running ? 'bg-green-500/12 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                  {status.running ? '运行中' : '已停止'}
+                </span>
               </Group>
               <Group gap="xs">
-                <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setShowRequestLogs(true)} disabled={!status.running}>
-                  <ScrollText size={12} className="mr-1" />
-                  请求日志
+                {!status.running ? (
+                  <Button size="sm" onClick={handleStart} disabled={hasFieldErrors || saving || loading}
+                    className="bg-gradient-to-r from-green-500 to-emerald-600 hover:opacity-90 text-white h-8 px-3.5 text-xs shadow-sm shadow-green-500/30">
+                    <Play size={13} className="mr-1" />启动
+                  </Button>
+                ) : (
+                  <Button size="sm" onClick={handleStop} disabled={saving || loading}
+                    className="bg-gradient-to-r from-red-500 to-rose-600 hover:opacity-90 text-white h-8 px-3.5 text-xs shadow-sm shadow-red-500/30">
+                    <Square size={13} className="mr-1" />停止
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => setShowRequestLogs(true)} disabled={!status.running}>
+                  <ScrollText size={13} className="mr-1" />请求日志
                 </Button>
               </Group>
             </Group>
 
-            <div className="grid grid-cols-3 gap-2">
-              {consoleHighlights.map((item) => (
-                <div key={item.label} className="border rounded-lg p-2">
-                  <Text size="xs" className={"text-muted-foreground"}>{item.label}</Text>
-                  <Text fw={700} className={"text-foreground text-sm"}>{item.value}</Text>
+            <div className="grid grid-cols-3 gap-2.5">
+              {consoleHighlights.map((item, i) => (
+                <div key={item.label} className="relative overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-muted/40 to-muted/10 p-2.5 pl-3">
+                  <span className={`absolute left-0 top-0 h-full w-1 ${['bg-blue-500', 'bg-violet-500', 'bg-emerald-500'][i]}`} />
+                  <Text size="xs" className="text-muted-foreground">{item.label}</Text>
+                  <Text fw={700} className={`${i === 0 ? 'text-blue-500' : 'text-foreground'} text-sm truncate block`}>{item.value}</Text>
                 </div>
               ))}
             </div>

@@ -57,7 +57,7 @@ function ConfirmModal({
       icon: AlertTriangle,
       iconColor: 'text-amber-400',
       iconBg: 'bg-gradient-to-br from-amber-500/20 to-orange-500/10',
-      btnVariant: 'primary' as const},
+      btnVariant: 'danger' as const},
     success: {
       icon: CheckCircle,
       iconColor: 'text-emerald-400',
@@ -78,15 +78,21 @@ function ConfirmModal({
 
   return (
     <DialogRoot open={true} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent maxWidth="400px">
+      <DialogContent maxWidth={type === 'info' ? '600px' : '400px'}>
         <DialogHeader icon={Icon} iconColor={iconColor} iconBg={iconBg}>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
         <DialogBody>
-          <p className="text-sm leading-relaxed whitespace-pre-line text-foreground">
-            {message}
-          </p>
+          <div className={
+            type === 'confirm' ? 'rounded-xl p-3 bg-amber-500/[0.07] border border-amber-500/20'
+            : type === 'error' ? 'rounded-xl p-3 bg-red-500/[0.07] border border-red-500/20'
+            : ''
+          }>
+            <p className="text-sm leading-relaxed whitespace-pre-line text-foreground">
+              {message}
+            </p>
+          </div>
           
           {/* 自定义内容 */}
           {customContent}

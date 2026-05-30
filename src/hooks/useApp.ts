@@ -1,12 +1,10 @@
-import { useTranslation } from 'react-i18next'
 import { useTheme } from 'next-themes'
 import { useDialog } from '../contexts/DialogContext'
 import { useAppSettings } from '../contexts/AppSettingsContext'
-import { TFunction } from 'i18next'
+import { t, type TFunc } from '../i18n'
 
 interface UseAppReturn {
-    t: TFunction;
-    i18n: any;
+    t: TFunc;
     theme: string;
     resolvedTheme: string | undefined;
     setTheme: (theme: string) => void;
@@ -21,7 +19,6 @@ interface UseAppReturn {
  * 为迁移 TS，增加了基础类型定义
  */
 export function useApp() {
-  const { t, i18n } = useTranslation()
   const { theme, setTheme, resolvedTheme } = useTheme()
   const dialog = useDialog()
   const { settings, updateSettings, loading: settingsLoading } = useAppSettings()
@@ -29,7 +26,6 @@ export function useApp() {
   return {
     // 基础
     t,
-    i18n,
     
     // 主题
     theme: theme || 'dark',

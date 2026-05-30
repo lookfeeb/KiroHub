@@ -403,20 +403,20 @@ function Settings() {
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList className="glass-card mb-4 flex h-10 w-full justify-start overflow-x-auto rounded-lg border-none p-0.5 no-scrollbar lg:w-fit">
-                        <TabsTrigger value="general" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                    <TabsList className="mb-4 flex h-11 w-full justify-start overflow-x-auto rounded-xl border border-border bg-muted/40 p-1 gap-0.5 no-scrollbar lg:w-fit">
+                        <TabsTrigger value="general" className="gap-1.5 px-3.5 h-9 shrink-0 text-sm font-medium rounded-lg data-active:bg-gradient-to-r data-active:from-blue-500 data-active:to-purple-600 data-active:text-white data-active:shadow-md data-active:shadow-blue-500/30">
                             <LayoutDashboard size={14} />
                             {t('settings.general')}
                         </TabsTrigger>
-                        <TabsTrigger value="cli" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                        <TabsTrigger value="cli" className="gap-1.5 px-3.5 h-9 shrink-0 text-sm font-medium rounded-lg data-active:bg-gradient-to-r data-active:from-blue-500 data-active:to-purple-600 data-active:text-white data-active:shadow-md data-active:shadow-blue-500/30">
                             <Terminal size={14} />
                             {t('settings.cliLaunch')}
                         </TabsTrigger>
-                        <TabsTrigger value="notifications" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                        <TabsTrigger value="notifications" className="gap-1.5 px-3.5 h-9 shrink-0 text-sm font-medium rounded-lg data-active:bg-gradient-to-r data-active:from-blue-500 data-active:to-purple-600 data-active:text-white data-active:shadow-md data-active:shadow-blue-500/30">
                             <Bell size={14} />
                             {t('settings.notifications')}
                         </TabsTrigger>
-                        <TabsTrigger value="about" className="gap-1.5 px-3 h-9 shrink-0 text-sm font-medium data-[state=active]:shadow-sm">
+                        <TabsTrigger value="about" className="gap-1.5 px-3.5 h-9 shrink-0 text-sm font-medium rounded-lg data-active:bg-gradient-to-r data-active:from-blue-500 data-active:to-purple-600 data-active:text-white data-active:shadow-md data-active:shadow-blue-500/30">
                             <Info size={14} />
                             {t('nav.about')}
                         </TabsTrigger>

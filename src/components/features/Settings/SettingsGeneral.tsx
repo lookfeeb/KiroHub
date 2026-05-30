@@ -2,7 +2,7 @@ import { Clock, Globe, Search, Shield, Shuffle, AlertTriangle, Eye, EyeOff, Repe
 import { Input } from '../../ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select'
 import React from 'react'
-import { TFunction } from 'i18next'
+import type { TFunc } from '../../../i18n'
 import SectionCard from './SectionCard'
 import SwitchRow from './SwitchRow'
 
@@ -55,7 +55,7 @@ interface SettingsGeneralProps {
   handleAutoSwitchThresholdChange: (value: number) => void;
   handleAutoSwitchIntervalChange: (value: string) => void;
   handleCloseToTrayChange: (checked: boolean) => void;
-  t: TFunction;
+  t: TFunc;
 }
 
 /// 紧凑开关行已抽到 ./SwitchRow
@@ -138,7 +138,7 @@ function SettingsGeneral({
         title={t('settings.account')}
         icon={<Users size={14} className="text-primary" />}
       >
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
           {/* 自动刷新 Token */}
           <SwitchRow
             checked={autoRefresh}
@@ -197,7 +197,7 @@ function SettingsGeneral({
             title={t('settings.autoSwitchDesc')}
           />
           {autoSwitchEnabled && (
-            <div className="flex items-center gap-2 pl-9 pr-3">
+            <div className="flex items-center gap-2 pl-9 pr-3 sm:col-span-2">
               <span className="text-xs text-muted-foreground whitespace-nowrap">{t('settings.autoSwitchThreshold')}</span>
               <Input
                 type="number"

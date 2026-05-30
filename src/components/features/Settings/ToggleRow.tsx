@@ -7,13 +7,17 @@ interface ToggleRowProps {
 }
 
 /**
- * 紧凑型开关行，用于 Settings 各 tab 的批量布尔配置（Agent / 通知 / 遥测）。
+ * 紧凑布尔配置行：标签左、开关右，启用态柔和主色高亮。与 SwitchRow 风格统一。
  */
 function ToggleRow({ checked, onChange, label }: ToggleRowProps) {
   return (
-    <label className="flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-md border border-border bg-card hover:bg-muted/40 transition-colors">
+    <label className={`group/row flex items-center gap-2.5 cursor-pointer px-3 py-2.5 rounded-xl border transition-all duration-200 ${
+      checked
+        ? 'border-primary/25 bg-primary/[0.05] hover:bg-primary/[0.08]'
+        : 'border-border bg-card hover:border-border/80 hover:bg-muted/40'
+    }`}>
+      <span className={`flex-1 min-w-0 text-xs ${checked ? 'text-foreground font-medium' : 'text-foreground'}`}>{label}</span>
       <Switch checked={checked} onCheckedChange={onChange} />
-      <span className="text-xs text-foreground">{label}</span>
     </label>
   )
 }

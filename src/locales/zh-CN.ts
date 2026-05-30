@@ -1,4 +1,5 @@
-{
+// 由 locales/zh-CN.json 迁移而来的中文文案常量
+export const messages: Record<string, string> = {
   "nav.home": "仪表盘",
   "nav.accounts": "账号管理",
   "nav.sessions": "会话管理",
@@ -198,7 +199,7 @@
   "login.waitingCloseHint": "点击取消会终止当前登录流程，之后可以重新发起登录。",
   "login.continue": "继续",
   "about.appName": "KiroHub",
-  "about.appDesc": "智能管理 Kiro 访问令牌，一键切换，配额监控",
+  "about.appDesc": "集中管理 Kiro IDE / CLI 账号，一键无缝切换、实时配额监控，让多账号管理轻松从容",
   "about.checkUpdate": "检查更新",
   "about.checking": "检查中",
   "about.upToDate": "已是最新版本",

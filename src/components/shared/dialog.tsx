@@ -128,23 +128,25 @@ const DialogHeader = React.forwardRef<HTMLDivElement, DialogHeaderProps>(({
       className={cn("px-6 pt-6 pb-2", className)}
       {...props}
     >
-      {Icon && (
-        <div className="flex items-center gap-3 mb-2">
+      <div className="flex items-center gap-3">
+        {Icon && (
           <div className={cn(
-            "w-10 h-10 rounded-xl",
+            "w-10 h-10 rounded-xl flex-shrink-0",
             "flex items-center justify-center",
             "shadow-md",
             iconBg || "bg-gradient-to-br from-blue-500/20 to-indigo-500/10"
           )}>
-            <Icon 
-              size={20} 
-              className={iconColor || "text-blue-400"} 
-              strokeWidth={2} 
+            <Icon
+              size={20}
+              className={iconColor || "text-blue-400"}
+              strokeWidth={2}
             />
           </div>
+        )}
+        <div className="flex flex-col gap-0.5 min-w-0">
+          {children}
         </div>
-      )}
-      {children}
+      </div>
     </div>
   )
 })
@@ -225,7 +227,6 @@ const DialogBody = React.forwardRef<HTMLDivElement, DialogBodyProps>(({
         gapClasses[gap],
         className
       )}
-      style={{ scrollbarWidth: 'thin' }}
       {...props}
     />
   )

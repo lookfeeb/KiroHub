@@ -147,6 +147,7 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
   const [kiroImporting, setKiroImporting] = useState(false)
   const [kiroProgress, setKiroProgress] = useState({ current: 0, total: 0 })
   const [kiroResult, setKiroResult] = useState<any>(null)
+  const kiroDetectedRef = useRef(false)
 
   // 从 kiro-cli 导入相关状态
   // 从 kiro-cli 导入相关状态
@@ -215,7 +216,8 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
 
   // 自动检测 Kiro 账号
   useEffect(() => {
-    if (activeTab === 'kiro') {
+    if (activeTab === 'kiro' && !kiroDetectedRef.current) {
+      kiroDetectedRef.current = true
       detectKiroAccounts()
     }
   }, [activeTab])
@@ -521,16 +523,9 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
 return (
   <DialogRoot open={true} onOpenChange={(open) => !open && onClose()}>
     <DialogContent maxWidth="700px">
-      <DialogHeader>
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo} flex items-center justify-center shadow-md ${accent.shadow}`}>
-            <Upload size={20} className="text-white" strokeWidth={2} />
-          </div>
-          <div>
-            <DialogTitle>{t('import.title')}</DialogTitle>
-            <DialogDescription>{t('import.subtitle') || '批量导入账号数据'}</DialogDescription>
-          </div>
-        </div>
+      <DialogHeader icon={Upload} iconColor="text-white" iconBg={`bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo} ${accent.shadow}`}>
+        <DialogTitle>{t('import.title')}</DialogTitle>
+        <DialogDescription>{t('import.subtitle') || '批量导入账号数据'}</DialogDescription>
       </DialogHeader>
 
       <DialogBody noPadding>
@@ -579,57 +574,28 @@ return (
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="px-6 pt-2 pb-3 border-b-0 bg-transparent h-auto">
-              <div className={`grid grid-cols-4 gap-1 p-1 rounded-xl border border-border bg-muted/30 w-full`}>
-                <button
-                  onClick={() => setActiveTab('json')}
-                  className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'json'
-                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
-                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <FileJson size={16} />
-                    <span>{t('import.jsonTab')}</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => setActiveTab('kiro')}
-                  className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'kiro'
-                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
-                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <Upload size={16} />
-                    <span>{t('import.kiroTab')}</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => setActiveTab('kiro-cli')}
-                  className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'kiro-cli'
-                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
-                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <Database size={16} />
-                    <span>{t('import.kiroCliTab')}</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => setActiveTab('online')}
-                  className={`py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer ${activeTab === 'online'
-                    ? `bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30`
-                    : `hover:bg-muted/50 text-muted-foreground hover:text-foreground`
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <LogIn size={16} />
-                    <span>{t('nav.desktopOAuth')}</span>
-                  </div>
-                </button>
-                
+            <TabsList className="px-6 pt-3 pb-2 border-b-0 bg-transparent h-auto">
+              <div className="grid grid-cols-4 gap-1 p-1 rounded-xl border border-border bg-muted/40 w-full">
+                {[
+                  { key: 'json', icon: FileJson, label: t('import.jsonTab') },
+                  { key: 'kiro', icon: Upload, label: t('import.kiroTab') },
+                  { key: 'kiro-cli', icon: Database, label: t('import.kiroCliTab') },
+                  { key: 'online', icon: LogIn, label: t('nav.desktopOAuth') },
+                ].map(({ key, icon: Icon, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setActiveTab(key)}
+                    className={`appearance-none outline-none border-0 py-2 px-3 text-sm rounded-lg transition-all duration-200 font-medium cursor-pointer flex items-center justify-center gap-2 ${
+                      activeTab === key
+                        ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md shadow-blue-500/30'
+                        : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/60'
+                    }`}
+                  >
+                    <Icon size={16} />
+                    <span className="truncate">{label}</span>
+                  </button>
+                ))}
               </div>
             </TabsList>
             <TabsContent value="json" className="px-6 pb-4 pt-4 outline-none">
@@ -673,13 +639,19 @@ return (
                   </LegacyButton>
                 </Group>
 
-                <textarea
-                  value={jsonText}
-                  onChange={(e) => { setJsonText(e.target.value); parseJson(e.target.value) }}
-                  rows={10}
-                  placeholder={`[{"refreshToken": "aor...", "provider": "Google"}]`}
-                  className={`w-full p-4 rounded-xl text-foreground bg-background border border-input ${colors.inputFocus} font-mono text-sm outline-none resize-none`}
-                />
+                <div className="rounded-xl border border-input bg-background overflow-hidden focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 bg-muted/30">
+                    <FileJson size={13} className="text-muted-foreground" />
+                    <span className="text-[11px] font-medium text-muted-foreground">JSON 凭证</span>
+                  </div>
+                  <textarea
+                    value={jsonText}
+                    onChange={(e) => { setJsonText(e.target.value); parseJson(e.target.value) }}
+                    rows={10}
+                    placeholder={`[{"refreshToken": "aor...", "provider": "Google"}]`}
+                    className="w-full p-4 bg-transparent text-foreground font-mono text-sm outline-none resize-none"
+                  />
+                </div>
 
                 {parseResult && (
                   <Stack gap="xs">

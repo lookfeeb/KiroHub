@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, memo, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { Copy, Check, RefreshCw, User, CreditCard, Shield, Cpu, Loader2, FileText, Image as ImageIcon, Zap, Hash, ChevronDown, X } from 'lucide-react'
+import { Copy, Check, RefreshCw, User, CreditCard, Shield, Cpu, Loader2, FileText, Image as ImageIcon, Zap, Hash, ChevronDown, X, Clock, Mail, Tag } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
-import { formatUsage, getAccountDisplayName } from '../../../utils/accountStats'
+import { formatUsage, getAccountDisplayName, getMergedQuota } from '../../../utils/accountStats'
 import { getAccountStatusMeta, isBannedStatus } from '../../../utils/accountStatus'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
 import {
@@ -13,6 +13,7 @@ import {
   DialogBody} from '../../shared/dialog'
 import { Switch } from '../../ui/switch'
 import { Account } from '../../../types/account'
+import ProviderBadge from '../../shared/ProviderBadge'
 import React from 'react'
 
 interface QuotaCardProps {
@@ -230,8 +231,10 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
     }
   })
   
-  const totalQuota = form.quota + freeTrialQuota + bonusQuota
-  const totalUsed = form.used + freeTrialUsed + bonusUsed
+  const merged = getMergedQuota(currentAccount)
+  const overageEnabled = merged.overageEnabled
+  const totalQuota = merged.quota + freeTrialQuota + bonusQuota
+  const totalUsed = merged.used + freeTrialUsed + bonusUsed
   const totalPercent = totalQuota > 0 ? Math.min(100, (totalUsed / totalQuota) * 100) : 0
   const statusMeta = getAccountStatusMeta({ status: form.status, usageData: currentAccount.usageData }, t)
 
@@ -241,80 +244,56 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
         {/* 顶部渐变背景 */}
         <div className="absolute top-0 left-0 right-0 h-40 bg-gradient-to-br from-blue-500/5 via-purple-500/3 to-transparent pointer-events-none rounded-t-2xl" />
         
-        <div className={`sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 rounded-t-2xl`}>
-          <div className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">账号详情</div>
-          <div className="flex items-start gap-3">
-            {/* 头像图标 */}
-            <div className={`
-              w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md
-              ${currentAccount.provider === 'Google'
-                ? 'bg-gradient-to-br from-red-500 to-orange-500' 
+        <div className="sticky top-0 z-20 bg-background/90 backdrop-blur-md border-b border-border px-6 pt-5 pb-4 rounded-t-2xl">
+          <div className="flex items-start gap-3.5">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg text-white text-lg font-bold ${
+              currentAccount.provider === 'Google'
+                ? 'bg-gradient-to-br from-red-500 to-orange-500 shadow-red-500/25'
                 : isGitHubProvider(currentAccount.provider)
-                  ? 'bg-gradient-to-br from-gray-700 to-gray-900' 
-                  : 'bg-gradient-to-br from-blue-500 to-indigo-600'
-              }`}
-            >
-              <User size={22} className="text-white" strokeWidth={2} />
+                  ? 'bg-gradient-to-br from-gray-700 to-gray-900 shadow-black/20'
+                  : 'bg-gradient-to-br from-blue-500 to-indigo-600 shadow-blue-500/25'
+            }`}>
+              {getAccountDisplayName(currentAccount)[0]?.toUpperCase() || <User size={22} />}
             </div>
-            
-            {/* 账号信息 */}
+
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h2 className={`text-base font-semibold text-foreground truncate`}>
-                  {currentAccount.email ? currentAccount.email : getAccountDisplayName(currentAccount)}
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <h2 className="text-[15px] font-semibold text-foreground truncate">
+                  {currentAccount.email || getAccountDisplayName(currentAccount)}
                 </h2>
-                <span className={`px-2 py-0.5 rounded-md text-xs font-medium whitespace-nowrap shadow-sm ${
-                  (currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.toUpperCase()?.includes('ENTERPRISE'))
+                <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm ${
+                  currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.toUpperCase()?.includes('ENTERPRISE')
                     ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-amber-500/30'
-                    : (currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.includes('PRO+'))
+                    : currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.includes('PRO+')
                       ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-purple-500/30'
-                      : (currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.includes('PRO'))
+                      : currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.includes('PRO')
                         ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-blue-500/30'
-                        : (currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.toUpperCase()?.includes('KIRO'))
+                        : currentAccount.usageData?.subscriptionInfo?.subscriptionTitle?.toUpperCase()?.includes('KIRO')
                           ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-teal-500/30'
-                          : `bg-muted/30 text-muted-foreground`
+                          : 'bg-muted text-muted-foreground'
                 }`}>
                   {currentAccount.usageData?.subscriptionInfo?.subscriptionTitle || 'Free'}
                 </span>
               </div>
-              
-              <div className={`flex items-center gap-2 text-xs text-muted-foreground mb-2`}>
-                <span className={`flex items-center gap-1 font-medium ${
-                  currentAccount.provider === 'Google' ? 'text-red-500'
-                    : isGitHubProvider(currentAccount.provider) ? "text-foreground"
-                    : currentAccount.provider === 'BuilderId' ? 'text-orange-500'
-                    : "text-muted-foreground"
-                }`}>
-                  <div className="w-1 h-1 rounded-full bg-current"></div>
-                  {getProviderDisplayName(currentAccount.provider) || t('common.unknown')}
-                </span>
-                <span>·</span>
-                <span>{t('detail.addedAt')} {currentAccount.addedAt?.split(' ')[0]}</span>
+
+              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                <ProviderBadge provider={currentAccount.provider} />
+                <span className="opacity-50">{t('detail.addedAt')} {currentAccount.addedAt?.split(' ')[0]}</span>
+                {currentAccount.machineId && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/40 border border-border/50">
+                    <span className="text-[10px] font-medium text-muted-foreground">Machine ID</span>
+                    <code className="text-[10px] font-mono text-red-400 truncate max-w-[180px]">{currentAccount.machineId}</code>
+                    <button type="button" onClick={() => handleCopy(currentAccount.machineId || '', 'machineId')}
+                      className="p-0.5 rounded hover:bg-muted/60 cursor-pointer transition-colors">
+                      {copied === 'machineId' ? <Check size={10} className="text-green-500" /> : <Copy size={10} className="text-muted-foreground" />}
+                    </button>
+                  </span>
+                )}
               </div>
-              
-              {/* 机器码 */}
-              {currentAccount.machineId && (
-                <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted/30`}>
-                  <span className={`text-[10px] font-medium text-muted-foreground`}>Machine ID:</span>
-                  <code className="text-[10px] font-mono text-red-400">
-                    {currentAccount.machineId}
-                  </code>
-                  <button 
-                    type="button"
-                    onClick={() => handleCopy(currentAccount.machineId || '', 'machineId')}
-                    className={`p-0.5 rounded hover:bg-muted/50 cursor-pointer transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30`}
-                  >
-                    {copied === 'machineId' ? <Check size={10} className="text-green-500" /> : <Copy size={10} className={"text-muted-foreground"} />}
-                  </button>
-                </div>
-              )}
             </div>
-            {/* 关闭按钮 */}
-            <button
-              onClick={onClose}
-              className="p-2 rounded-full hover:bg-muted transition-colors flex-shrink-0"
-            >
-              <X size={18} className="text-muted-foreground" />
+
+            <button onClick={onClose} className="p-2 rounded-xl hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-colors flex-shrink-0">
+              <X size={18} />
             </button>
           </div>
         </div>
@@ -322,63 +301,59 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
         {/* Body - 使用 DialogBody 的 noPadding，自己控制每个区域的 padding */}
         <DialogBody noPadding>
           {/* 配额总览 */}
-          <div className={`border-b border-border px-6 py-5`}>
+          <div className="border-b border-border px-6 py-5">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <div className={`p-1.5 rounded-lg bg-muted/30`}>
-                  <CreditCard size={18} className={"text-muted-foreground"} />
+                <div className="p-1.5 rounded-lg bg-blue-500/10">
+                  <CreditCard size={16} className="text-blue-500" />
                 </div>
-                <span className={`text-sm font-semibold text-foreground`}>{t('detail.quotaOverview')}</span>
+                <span className="text-sm font-semibold text-foreground">{t('detail.quotaOverview')}</span>
               </div>
-              <button 
-                type="button" 
-                onClick={handleRefresh} 
-                disabled={refreshing} 
-                className={`
-                  p-2 rounded-lg transition-colors duration-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30
-                  ${refreshing ? 'bg-blue-500/20' : 'bg-blue-500/20 hover:bg-blue-500/30'}
-                  disabled:opacity-50 disabled:cursor-not-allowed
-                `} 
-                title={t('detail.syncQuota')}
-              >
-                <RefreshCw size={15} className={`text-blue-500 ${refreshing ? 'animate-spin' : ''}`} />
+              <button type="button" onClick={handleRefresh} disabled={refreshing} title={t('detail.syncQuota')}
+                className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-600 hover:bg-blue-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+                {t('detail.syncQuota')}
               </button>
             </div>
-              
-            <div className="mb-5">
-              <div className="flex items-baseline justify-between mb-3">
-                <div>
-                  <span className={`text-4xl font-semibold text-foreground`}>{formatUsage(totalUsed)}</span>
-                  <span className={`text-lg text-muted-foreground ml-2`}>/ {formatUsage(totalQuota)}</span>
+
+            <div className="rounded-2xl border border-border bg-gradient-to-br from-muted/40 to-muted/10 p-4">
+              <div className="flex items-end justify-between mb-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold text-foreground tracking-tight">{formatUsage(totalUsed)}</span>
+                  <span className="text-base text-muted-foreground">/ {formatUsage(totalQuota)}</span>
                 </div>
-                <span className={`text-base font-medium px-3 py-1 rounded-lg ${
-                  totalPercent > 80 ? 'bg-red-500/20 text-red-500' 
-                  : totalPercent > 50 ? 'bg-yellow-500/20 text-yellow-600' 
-                  : 'bg-green-500/20 text-green-600'
-                }`}>
-                  {totalPercent.toFixed(0)}% {t('detail.used')}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`text-sm font-bold px-2.5 py-1 rounded-lg ${
+                    totalPercent > 80 ? 'bg-red-500/15 text-red-500'
+                    : totalPercent > 50 ? 'bg-yellow-500/15 text-yellow-600'
+                    : 'bg-green-500/15 text-green-600'
+                  }`}>{totalPercent.toFixed(0)}% {t('detail.used')}</span>
+                  <span className="text-[11px] text-muted-foreground">剩余 {formatUsage(Math.max(0, totalQuota - totalUsed))}</span>
+                </div>
               </div>
-              <div className={`h-4 bg-muted/30 rounded-full overflow-hidden shadow-inner`}>
-                <div
-                  className={`h-full rounded-full transition-all duration-500 shadow-lg ${
-                    totalPercent > 80 ? 'bg-gradient-to-r from-red-400 to-red-500'
-                    : totalPercent > 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500'
-                    : 'bg-gradient-to-r from-green-400 to-emerald-500'
-                  }`}
-                  style={{ width: `${totalPercent}%` }}
-                />
+              <div className="h-3 bg-muted rounded-full overflow-hidden shadow-inner">
+                <div className={`h-full rounded-full transition-all duration-500 ${
+                  totalPercent > 80 ? 'bg-gradient-to-r from-red-400 to-red-500'
+                  : totalPercent > 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500'
+                  : 'bg-gradient-to-r from-green-400 to-emerald-500'
+                }`} style={{ width: `${totalPercent}%` }} />
               </div>
-              {/* 合并自原配额卡片：重置时间 + 有数据时的试用/奖励额度 */}
-              <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
+              <div className="flex items-center flex-wrap gap-2 mt-3">
+                {overageEnabled && (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20">
+                    <Zap size={11} />基础 {formatUsage(merged.baseQuota)} + 超额 {formatUsage(merged.overageCap)}
+                  </span>
+                )}
                 {currentAccount.usageData?.nextDateReset && (
-                  <span className="flex items-center gap-1">🔄 {new Date(currentAccount.usageData.nextDateReset * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}{t('detail.reset')}</span>
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-background/60 border border-border/50 text-muted-foreground">
+                    <Clock size={11} />{new Date(currentAccount.usageData.nextDateReset * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}{t('detail.reset')}
+                  </span>
                 )}
                 {freeTrialQuota > 0 && (
-                  <span className="flex items-center gap-1">⏰ {t('detail.freeTrial')} {formatUsage(freeTrialUsed)}/{formatUsage(freeTrialQuota)}</span>
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 border border-cyan-500/20">⏰ {t('detail.freeTrial')} {formatUsage(freeTrialUsed)}/{formatUsage(freeTrialQuota)}</span>
                 )}
                 {bonusQuota > 0 && (
-                  <span className="flex items-center gap-1">🎁 {t('detail.bonusTotal')} {formatUsage(bonusUsed)}/{formatUsage(bonusQuota)}</span>
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20">🎁 {t('detail.bonusTotal')} {formatUsage(bonusUsed)}/{formatUsage(bonusQuota)}</span>
                 )}
               </div>
             </div>
@@ -437,36 +412,50 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                   <User size={16} className="text-primary" />
                   {t('detail.basicInfo')}
                 </h3>
-                <div className="bg-muted/60 border border-border rounded-xl p-4 space-y-4 shadow-sm">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">{t('detail.emailAddress')}</label>
-                    <div className="flex items-center gap-2 group">
-                      <div className="text-sm font-mono break-all select-all flex-1">{currentAccount.email || getAccountDisplayName(currentAccount)}</div>
-                      <button onClick={() => handleCopy(currentAccount.email || '', 'email')} className="p-1 rounded hover:bg-muted/60 transition-colors shrink-0 opacity-0 group-hover:opacity-100 cursor-pointer" title="复制">
-                        {copied === 'email' ? <Check size={13} className="text-green-500" /> : <Copy size={13} className="text-muted-foreground" />}
-                      </button>
+                <div className="rounded-xl border border-border bg-gradient-to-br from-muted/50 to-muted/15 shadow-sm divide-y divide-border/40 overflow-hidden">
+                  {/* 邮箱 */}
+                  <div className="flex items-center gap-3 px-3.5 py-2.5 group">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/12 text-blue-500 shrink-0"><Mail size={14} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">{t('detail.emailAddress')}</div>
+                      <div className="text-sm font-mono text-foreground truncate select-all">{currentAccount.email || getAccountDisplayName(currentAccount)}</div>
+                    </div>
+                    <button onClick={() => handleCopy(currentAccount.email || '', 'email')} title="复制"
+                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0 cursor-pointer">
+                      {copied === 'email' ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                    </button>
+                  </div>
+                  {/* 备注标签 */}
+                  <div className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/12 text-amber-500 shrink-0"><Tag size={14} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">{t('detail.remarkLabel')}</div>
+                      <div className="text-sm font-medium text-foreground truncate">{currentAccount.label || '-'}</div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1 min-w-0">
-                      <label className="text-xs font-medium text-muted-foreground">{t('detail.remarkLabel')}</label>
-                      <div className="text-sm font-medium truncate">{currentAccount.label || '-'}</div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground">Provider</label>
-                      <div className="text-sm font-medium">{getProviderDisplayName(currentAccount.provider) || '-'}</div>
+                  {/* Provider */}
+                  <div className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-lg shrink-0 ${
+                      currentAccount.provider === 'Google' ? 'bg-red-500/12 text-red-500'
+                      : isGitHubProvider(currentAccount.provider) ? 'bg-slate-500/12 text-slate-400'
+                      : 'bg-primary/12 text-primary'
+                    }`}><User size={14} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">Provider</div>
+                      <div className="text-sm font-medium text-foreground">{getProviderDisplayName(currentAccount.provider) || '-'}</div>
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Hash size={11} /> User ID</label>
-                    <div className="flex items-center gap-2 group bg-background/60 border border-border/60 rounded-lg p-2">
-                      <div className="text-xs font-mono truncate select-all flex-1" title={currentAccount.usageData?.userInfo?.userId || '-'}>
-                        {currentAccount.usageData?.userInfo?.userId || '-'}
-                      </div>
-                      <button onClick={() => handleCopy(currentAccount.usageData?.userInfo?.userId || '', 'userId')} className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-muted/60 transition-colors shrink-0 text-muted-foreground cursor-pointer" title="复制">
-                        {copied === 'userId' ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
-                      </button>
+                  {/* User ID */}
+                  <div className="flex items-center gap-3 px-3.5 py-2.5 group">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/12 text-violet-500 shrink-0"><Hash size={14} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">User ID</div>
+                      <div className="text-xs font-mono text-foreground truncate select-all" title={currentAccount.usageData?.userInfo?.userId || '-'}>{currentAccount.usageData?.userInfo?.userId || '-'}</div>
                     </div>
+                    <button onClick={() => handleCopy(currentAccount.usageData?.userInfo?.userId || '', 'userId')} title="复制"
+                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0 cursor-pointer">
+                      {copied === 'userId' ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                    </button>
                   </div>
                 </div>
               </section>
@@ -480,7 +469,15 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                 <div className="bg-muted/60 border border-border rounded-xl p-4 text-sm space-y-0.5 shadow-sm">
                   <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">订阅类型</span>
-                    <span className="font-mono text-xs font-medium">{currentAccount.usageData?.subscriptionInfo?.type || '-'}</span>
+                    {(() => {
+                      const st = currentAccount.usageData?.subscriptionInfo?.type || ''
+                      const tone = st.includes('ENTERPRISE') ? 'bg-amber-500/12 text-amber-600'
+                        : st.includes('PRO+') ? 'bg-purple-500/12 text-purple-600'
+                        : st.includes('POWER') ? 'bg-violet-500/12 text-violet-600'
+                        : st.includes('PRO') ? 'bg-blue-500/12 text-blue-600'
+                        : 'bg-muted text-muted-foreground'
+                      return <span className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${tone}`}>{st || '-'}</span>
+                    })()}
                   </div>
                   <div className="flex justify-between items-center py-1.5 px-2 -mx-2 rounded-lg hover:bg-muted/40 transition-colors border-b border-border/30">
                     <span className="text-muted-foreground text-xs">Region</span>
@@ -555,8 +552,8 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
               className="flex items-center gap-2 cursor-pointer select-none"
               onClick={() => setModelsExpanded(!modelsExpanded)}
             >
-              <div className={`p-1.5 rounded-lg bg-muted/30`}>
-                <Cpu size={18} className={"text-muted-foreground"} />
+              <div className="p-1.5 rounded-lg bg-violet-500/10">
+                <Cpu size={16} className="text-violet-500" />
               </div>
               <span className={`text-sm font-semibold text-foreground`}>{t('detail.availableModels')}</span>
               <span className={`ml-auto text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium`}>
@@ -588,63 +585,58 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
                   {t('detail.noModels')}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[320px] overflow-y-auto no-scrollbar">
-                  {models.map((model, index) => (
-                    <div 
-                      key={model.modelId} 
-                      className={`group p-3 bg-background rounded-xl border shadow-sm hover:shadow-md hover:border-primary/30 transition-all duration-200 ${
-                        index === 0 ? 'ring-1 ring-primary/20' : ''
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <div className={`w-2 h-2 rounded-full shrink-0 ${
-                              index === 0 ? 'bg-primary animate-pulse' : 'bg-muted-foreground/40'
-                            }`} />
-                            <code className="text-xs font-bold text-foreground truncate">
-                              {model.modelId}
-                            </code>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[320px] overflow-y-auto no-scrollbar">
+                  {models.map((model, index) => {
+                    const norm = (s: string) => (s || '').toLowerCase().replace(/[\s_-]/g, '')
+                    const showName = model.modelName && norm(model.modelName) !== norm(model.modelId)
+                    const isDefault = index === 0
+                    const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(0)}M` : `${(n / 1000).toFixed(0)}K`
+                    return (
+                      <div key={model.modelId}
+                        className={`group relative flex flex-col gap-2 p-3 rounded-xl border bg-gradient-to-br from-background to-muted/20 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ${
+                          isDefault ? 'border-primary/40 ring-1 ring-primary/20' : 'border-border/60 hover:border-primary/30'
+                        }`}>
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${isDefault ? 'bg-primary animate-pulse' : 'bg-muted-foreground/40'}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <button type="button" onClick={() => handleCopy(model.modelId, `model:${model.modelId}`)} title="点击复制模型名称"
+                                className="group/copy inline-flex items-center gap-1 min-w-0 cursor-pointer">
+                                <code className="text-[13px] font-bold text-primary truncate group-hover/copy:underline">{model.modelId.charAt(0).toUpperCase() + model.modelId.slice(1)}</code>
+                                {copied === `model:${model.modelId}`
+                                  ? <Check size={11} className="text-green-500 shrink-0" />
+                                  : <Copy size={11} className="text-muted-foreground shrink-0 opacity-0 group-hover/copy:opacity-100 transition-opacity" />}
+                              </button>
+                              {isDefault && <span className="text-[9px] font-bold px-1.5 py-px rounded-full bg-primary/15 text-primary shrink-0">默认</span>}
+                            </div>
+                            {showName && <p className="text-[11px] text-primary/80 font-medium truncate mt-0.5">{model.modelName}</p>}
+                            <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed mt-0.5">{model.description || t('detail.noDescription')}</p>
                           </div>
-                          {model.modelName && model.modelName !== model.modelId && (
-                            <p className="text-[11px] text-primary/80 font-medium mb-1 truncate">{model.modelName}</p>
-                          )}
-                          <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
-                            {model.description || t('detail.noDescription')}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
-                        <div className="flex items-center gap-1.5">
-                          {model.supportedInputTypes?.includes('TEXT') && (
-                            <span className="text-[10px] px-1.5 h-5 bg-blue-500/10 text-blue-600 border-0 rounded inline-flex items-center gap-0.5 font-medium">
-                              <FileText size={12} />Text
-                            </span>
-                          )}
-                          {model.supportedInputTypes?.includes('IMAGE') && (
-                            <span className="text-[10px] px-1.5 h-5 bg-purple-500/10 text-purple-600 border-0 rounded inline-flex items-center gap-0.5 font-medium">
-                              <ImageIcon size={12} />Image
-                            </span>
-                          )}
                           {model.rateMultiplier !== undefined && (
-                            <span className="text-[10px] px-1.5 h-5 bg-amber-500/10 text-amber-600 border-0 rounded inline-flex items-center gap-0.5 font-medium">
-                              <Zap size={12} />{model.rateMultiplier}x
+                            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 h-5 rounded-md bg-amber-500/12 text-amber-600">
+                              <Zap size={11} />{model.rateMultiplier}x
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
-                          <Hash size={12} />
-                          <span className="text-green-600">
-                            {model.tokenLimits?.maxInputTokens ? (model.tokenLimits.maxInputTokens >= 1000000 ? `${(model.tokenLimits.maxInputTokens / 1000000).toFixed(0)}M` : `${(model.tokenLimits.maxInputTokens / 1000).toFixed(0)}K`) : '-'}
-                          </span>
-                          <span>/</span>
-                          <span className="text-orange-600">
-                            {model.tokenLimits?.maxOutputTokens ? (model.tokenLimits.maxOutputTokens >= 1000000 ? `${(model.tokenLimits.maxOutputTokens / 1000000).toFixed(0)}M` : `${(model.tokenLimits.maxOutputTokens / 1000).toFixed(0)}K`) : '-'}
-                          </span>
+                        <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                          <div className="flex items-center gap-1.5">
+                            {model.supportedInputTypes?.includes('TEXT') && (
+                              <span className="text-[10px] px-1.5 h-5 bg-blue-500/10 text-blue-600 rounded inline-flex items-center gap-0.5 font-medium"><FileText size={11} />Text</span>
+                            )}
+                            {model.supportedInputTypes?.includes('IMAGE') && (
+                              <span className="text-[10px] px-1.5 h-5 bg-purple-500/10 text-purple-600 rounded inline-flex items-center gap-0.5 font-medium"><ImageIcon size={11} />Image</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
+                            <Hash size={11} />
+                            <span className="text-green-600">{model.tokenLimits?.maxInputTokens ? fmt(model.tokenLimits.maxInputTokens) : '-'}</span>
+                            <span className="opacity-50">/</span>
+                            <span className="text-orange-600">{model.tokenLimits?.maxOutputTokens ? fmt(model.tokenLimits.maxOutputTokens) : '-'}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -653,12 +645,23 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
         </DialogBody>
 
         {/* 状态栏（底部简洁显示） */}
-        <div className="px-6 py-3 border-t border-border flex items-center gap-2">
-          {statusMeta.tone === 'success'
-            ? <><Shield size={14} className="text-green-500" /><span className="text-xs text-green-500 font-medium">{statusMeta.label}</span></>
-            : statusMeta.tone === 'danger'
-              ? <><Shield size={14} className="text-red-500" /><span className="text-xs text-red-500 font-medium">{statusMeta.label}</span></>
-              : <><Shield size={14} className="text-orange-500" /><span className="text-xs text-orange-500 font-medium">{statusMeta.label}</span></>}
+        <div className="px-6 py-3.5 border-t border-border flex items-center justify-between bg-gradient-to-r from-muted/30 via-transparent to-transparent">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+            statusMeta.tone === 'success' ? 'bg-green-500/12 text-green-500'
+            : statusMeta.tone === 'danger' ? 'bg-red-500/12 text-red-500'
+            : 'bg-orange-500/12 text-orange-500'
+          }`}>
+            <span className="relative flex h-2.5 w-2.5">
+              <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping ${
+                statusMeta.tone === 'success' ? 'bg-green-500' : statusMeta.tone === 'danger' ? 'bg-red-500' : 'bg-orange-500'
+              }`} />
+              <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                statusMeta.tone === 'success' ? 'bg-green-500' : statusMeta.tone === 'danger' ? 'bg-red-500' : 'bg-orange-500'
+              }`} />
+            </span>
+            {statusMeta.label}
+          </span>
+          <ProviderBadge provider={currentAccount.provider} />
         </div>
       </DialogContent>
     </DialogRoot>,

@@ -2,17 +2,18 @@ import { useState, useEffect } from 'react'
 import { sessionApi } from '@/api/sessionApi'
 import { SessionSummary, IdeSession } from '@/types/session'
 import { Card } from '@/components/ui/card'
+import Markdown from '../../shared/Markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Search, Trash2, Download, MessageSquare, ChevronRight, ChevronDown, Terminal, Monitor, Folder } from 'lucide-react'
+import { Loader2, Search, Trash2, MessageSquare, ChevronRight, ChevronDown, Terminal, Monitor, Folder, Copy, FileJson, FileText } from 'lucide-react'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useDialog } from '@/contexts/DialogContext'
 import { showSuccess, showError, showWarning } from '@/utils/toast'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '../../../i18n'
 
 export default function SessionManager() {
   const { t } = useTranslation()
@@ -349,42 +350,44 @@ export default function SessionManager() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar - Workspaces with expandable sessions */}
         <div className="w-72 border-r border-border flex flex-col">
-          <div className="p-3 border-b border-border space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-foreground">工作区与会话</h2>
-              {selectedWorkspaceHashes.size > 0 && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="h-6 text-[11px]"
-                  onClick={handleBatchDeleteWorkspaces}
-                >
-                  <Trash2 className="h-3 w-3 mr-1" />
-                  删除 ({selectedWorkspaceHashes.size})
-                </Button>
-              )}
+          <div className="p-3 border-b border-border space-y-3 bg-gradient-to-b from-muted/20 to-transparent">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shrink-0">
+                  <Folder size={15} />
+                </span>
+                <div className="flex flex-col leading-tight min-w-0">
+                  <h2 className="text-[13px] font-semibold text-foreground truncate">工作区与会话</h2>
+                  <span className="text-[10px] text-muted-foreground">{workspaces.length} 个工作区</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {workspaces.length > 0 && (
+                  <button
+                    onClick={toggleSelectAllWorkspaces}
+                    className="h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  >
+                    {selectedWorkspaceHashes.size === workspaces.length ? '取消全选' : '全选'}
+                  </button>
+                )}
+                {selectedWorkspaceHashes.size > 0 && (
+                  <button
+                    onClick={handleBatchDeleteWorkspaces}
+                    className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium bg-red-500/12 text-red-500 hover:bg-red-500/20 transition-colors"
+                  >
+                    <Trash2 className="h-3 w-3" />{selectedWorkspaceHashes.size}
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>{workspaces.length} 个工作区</span>
-              {workspaces.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-2 text-[11px]"
-                  onClick={toggleSelectAllWorkspaces}
-                >
-                  {selectedWorkspaceHashes.size === workspaces.length ? '取消全选' : '全选'}
-                </Button>
-              )}
-            </div>
-            {/* Search */}
+            {/* 搜索 */}
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
                 placeholder="搜索会话..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-8 pl-8 text-xs"
+                className="w-full h-9 pl-9 pr-3 rounded-xl border border-input bg-background text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground"
               />
             </div>
           </div>
@@ -480,7 +483,9 @@ export default function SessionManager() {
                             <div key={workspace}>
                               {/* 工作区行 */}
                               <div
-                                className="group flex items-center h-8 pl-4 pr-1.5 rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
+                                className={`group flex items-center gap-1 h-9 pl-2.5 pr-1.5 rounded-lg cursor-pointer transition-all ${
+                                  checked ? 'bg-primary/[0.07] hover:bg-primary/10' : 'hover:bg-muted/60'
+                                }`}
                                 onClick={() => toggleWorkspace(workspace)}
                                 title={workspace}
                               >
@@ -489,17 +494,19 @@ export default function SessionManager() {
                                   checked={checked}
                                   onCheckedChange={() => toggleWorkspaceSelection(workspace)}
                                   onClick={(e) => e.stopPropagation()}
-                                  className={`ml-1 shrink-0 cursor-pointer transition-opacity ${checked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                  className={`shrink-0 cursor-pointer transition-opacity ${checked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                                 />
-                                <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0 ml-1.5" />
-                                <span className="ml-1.5 flex-1 min-w-0 truncate text-xs font-medium text-foreground">
+                                <span className={`flex h-6 w-6 items-center justify-center rounded-md shrink-0 transition-colors ${isExpanded ? 'bg-primary/12 text-primary' : 'text-muted-foreground'}`}>
+                                  <Folder className="h-3.5 w-3.5" />
+                                </span>
+                                <span className="flex-1 min-w-0 truncate text-xs font-medium text-foreground">
                                   {decodeWorkspaceName(workspace)}
                                 </span>
                                 {sessions.length > 0 && (
-                                  <span className="text-[10px] text-muted-foreground tabular-nums mr-1 shrink-0">{sessions.length}</span>
+                                  <span className="inline-flex items-center h-5 px-1.5 rounded-full bg-muted text-[10px] font-medium text-muted-foreground tabular-nums shrink-0">{sessions.length}</span>
                                 )}
                                 <button
-                                  className="h-5 w-5 shrink-0 rounded inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground transition-all"
+                                  className="h-6 w-6 shrink-0 rounded-md inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/12 hover:text-destructive transition-all"
                                   onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(workspace) }}
                                   title="删除工作区"
                                 >
@@ -567,23 +574,10 @@ export default function SessionManager() {
             </div>
           ) : selectedSession ? (
             <>
-              <div className="px-4 py-3 border-b border-border flex items-start justify-between gap-3">
+              <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-muted/30 via-transparent to-transparent flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    {renderSourceBadge(sourceOf(selectedWorkspaceHash))}
-                    <span className="text-[11px] text-muted-foreground flex items-center gap-1 min-w-0 max-w-[280px]">
-                      <Folder className="h-3 w-3 shrink-0" />
-                      <span className="truncate" title={selectedSession.workspaceDirectory}>
-                        {selectedSession.workspaceDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedSession.workspaceDirectory || '—'}
-                      </span>
-                    </span>
-                    <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
-                      <MessageSquare className="h-3 w-3" />
-                      {selectedSession.history.length}
-                    </span>
-                  </div>
-                  <h2
-                    className="text-sm font-semibold text-foreground line-clamp-2 leading-snug cursor-pointer hover:underline"
+                  <div
+                    className="group inline-flex items-start gap-1.5 cursor-pointer max-w-full"
                     title="点击复制会话文件路径"
                     onClick={async () => {
                       try {
@@ -595,8 +589,24 @@ export default function SessionManager() {
                       }
                     }}
                   >
-                    {selectedSession.title}
-                  </h2>
+                    <h2 className="text-sm font-semibold text-foreground line-clamp-2 leading-snug transition-colors group-hover:text-primary">
+                      {selectedSession.title}
+                    </h2>
+                    <Copy className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    {renderSourceBadge(sourceOf(selectedWorkspaceHash))}
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] text-muted-foreground bg-muted/50 border border-border/60 min-w-0 max-w-[280px]">
+                      <Folder className="h-3 w-3 shrink-0" />
+                      <span className="truncate" title={selectedSession.workspaceDirectory}>
+                        {selectedSession.workspaceDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedSession.workspaceDirectory || '—'}
+                      </span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] text-muted-foreground bg-muted/50 border border-border/60 shrink-0">
+                      <MessageSquare className="h-3 w-3" />
+                      {selectedSession.history.length}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   <Button
@@ -605,7 +615,7 @@ export default function SessionManager() {
                     className="h-7 text-xs"
                     onClick={() => handleExportSession('json')}
                   >
-                    <Download className="h-3.5 w-3.5 mr-1" />
+                    <FileJson className="h-3.5 w-3.5 mr-1" />
                     JSON
                   </Button>
                   <Button
@@ -614,7 +624,7 @@ export default function SessionManager() {
                     className="h-7 text-xs"
                     onClick={() => handleExportSession('markdown')}
                   >
-                    <Download className="h-3.5 w-3.5 mr-1" />
+                    <FileText className="h-3.5 w-3.5 mr-1" />
                     Markdown
                   </Button>
                 </div>
@@ -663,24 +673,25 @@ export default function SessionManager() {
                         return null
                       }
 
+                      const isUser = item.message.role === 'user'
                       return (
-                        <Card key={item.message.id} className="p-4">
-                          <div className="flex items-start gap-3">
-                            <div className="text-2xl shrink-0">
-                              {item.message.role === 'user' ? '👤' : '🤖'}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium mb-2">
-                                {item.message.role === 'user' ? 'User' : 'Assistant'}
-                              </div>
-                              {item.message.content.map((content, i) => (
-                                <div key={i} className="whitespace-pre-wrap text-sm break-words">
-                                  {content.text}
-                                </div>
-                              ))}
-                            </div>
+                        <div key={item.message.id} className="flex gap-2.5">
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0 shadow-sm ring-1 ${
+                            isUser ? 'bg-gradient-to-br from-blue-500/20 to-indigo-500/10 ring-blue-500/20' : 'bg-gradient-to-br from-emerald-500/20 to-teal-500/10 ring-emerald-500/20'
+                          }`}>
+                            {isUser ? '👤' : '🤖'}
                           </div>
-                        </Card>
+                          <div className={`flex-1 min-w-0 rounded-2xl border px-4 py-3 ${
+                            isUser ? 'bg-blue-500/[0.05] border-blue-500/20' : 'bg-card border-border'
+                          }`}>
+                            <div className={`text-xs font-semibold mb-1.5 ${isUser ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                              {isUser ? 'User' : 'Assistant'}
+                            </div>
+                            {item.message.content.map((content, i) => (
+                              <Markdown key={i} text={content.text} />
+                            ))}
+                          </div>
+                        </div>
                       )
                     })
                   )}

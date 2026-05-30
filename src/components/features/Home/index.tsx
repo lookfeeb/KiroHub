@@ -166,12 +166,15 @@ function Home({ onNavigate }: HomeProps) {
 
         {/* 主卡片：当前账号 | CLI 账号 */}
         <Card className="card-glow animate-scale-in delay-300 overflow-hidden">
-          <div className={`flex items-center justify-between px-4 py-2.5 border-b border-border bg-gradient-to-r ${accent.gradientFrom}/10 ${accent.gradientTo}/5`}>
-            <div className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo} flex items-center justify-center shadow-sm ring-1 ring-primary/20`}>
-                <Sparkles size={12} className="text-white" />
+          <div className={`flex items-center justify-between px-4 py-3 border-b border-border bg-gradient-to-r ${accent.gradientFrom}/10 ${accent.gradientTo}/5`}>
+            <div className="flex items-center gap-2.5">
+              <div className={`w-7 h-7 rounded-xl bg-gradient-to-br ${accent.gradientFrom} ${accent.gradientTo} flex items-center justify-center shadow-md ring-1 ring-primary/20`}>
+                <Sparkles size={13} className="text-white" />
               </div>
-              <span className="text-sm font-semibold text-foreground tracking-wide">Kiro 账号</span>
+              <div className="flex flex-col leading-tight">
+                <span className="text-sm font-semibold text-foreground tracking-wide">Kiro 账号</span>
+                <span className="text-[10px] text-muted-foreground">IDE / CLI 当前登录态</span>
+              </div>
             </div>
             <TooltipProvider>
               <Tooltip>
@@ -359,6 +362,13 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
   t: any;
 }) {
   const { quota, used, remaining, percent, overageEnabled, baseQuota, baseUsed, overageCap: mergedOverageCap, overageUsed } = getMergedQuota(account)
+  const [, setTick] = useState(0)
+  const nextResetRaw = account.usageData?.nextDateReset
+  useEffect(() => {
+    if (!nextResetRaw) return
+    const id = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [nextResetRaw])
   const plan = getSubPlan(account)
   const email = account.usageData?.userInfo?.email || account.email || ''
   const provider = account.provider || ''
@@ -406,16 +416,24 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
     return 'text-green-500'
   }
 
-  // 重置时间
+  // 重置时间（实时倒计时）
   let resetStr = ''
   let daysUntilReset: number | null = null
   let resetDateStr = ''
   if (nextReset) {
     const resetDate = new Date(typeof nextReset === 'string' ? nextReset : (nextReset < 1e12 ? nextReset * 1000 : nextReset))
     resetDateStr = resetDate.toLocaleDateString()
-    const now = new Date()
-    daysUntilReset = Math.max(0, Math.ceil((resetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-    resetStr = daysUntilReset === 0 ? '今日重置' : `${daysUntilReset}天后重置`
+    const diff = resetDate.getTime() - Date.now()
+    daysUntilReset = Math.max(0, Math.ceil(diff / 86400000))
+    if (diff <= 0) {
+      resetStr = '即将重置'
+    } else {
+      const d = Math.floor(diff / 86400000)
+      const h = Math.floor((diff % 86400000) / 3600000)
+      const m = Math.floor((diff % 3600000) / 60000)
+      const s = Math.floor((diff % 60000) / 1000)
+      resetStr = `${d > 0 ? `${d}天` : ''}${h}时${m}分${s}秒后重置`
+    }
   }
 
   // 超额使用百分比（相对于超额上限）
@@ -435,14 +453,18 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
           </div>
           <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 ring-2 ring-background" />
         </div>
-        <div className="flex flex-col min-w-0 flex-1">
+        <div className="flex flex-col min-w-0 flex-1 gap-1">
           <span className="text-sm font-semibold text-foreground truncate">
             {email ? maskEmail(email) : getProviderDisplayName(provider)}
           </span>
-          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-            {getProviderDisplayName(provider)}
-            {daysUntilReset != null && <><span className="opacity-40">·</span><Clock size={10} className="opacity-70" />{resetStr}</>}
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] text-muted-foreground">{getProviderDisplayName(provider)}</span>
+            {daysUntilReset != null && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 tabular-nums">
+                <Clock size={10} />{resetStr}
+              </span>
+            )}
+          </div>
         </div>
         {plan && (
           <Badge variant="default" className="shrink-0 text-[10px] px-1.5 py-0"
@@ -588,14 +610,14 @@ function QuotaRow({ label, used, limit, percent, color, accent, expiry }: {
 
 // 区块容器
 function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-xl border border-border/60 bg-muted/25 p-3 transition-colors hover:border-primary/30 ${className}`}>{children}</div>
+  return <div className={`rounded-xl border border-border/50 bg-gradient-to-br from-muted/35 to-muted/10 p-3 transition-all hover:border-primary/30 hover:shadow-sm ${className}`}>{children}</div>
 }
 
 // 区块标题
 function PanelTitle({ icon: Icon, children, color = 'text-muted-foreground' }: { icon?: any; children: ReactNode; color?: string }) {
   return (
-    <div className="flex items-center gap-1.5 mb-2">
-      {Icon && <Icon size={11} className={color} />}
+    <div className="flex items-center gap-1.5 mb-2.5">
+      {Icon && <span className={`flex h-5 w-5 items-center justify-center rounded-md bg-current/10 ${color}`}><Icon size={11} className={color} /></span>}
       <span className={`text-[10px] font-bold uppercase tracking-wider ${color}`}>{children}</span>
     </div>
   )
@@ -609,9 +631,9 @@ function InfoRow({ label, value, valueClass, mono }: {
   mono?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex items-center justify-between gap-2 py-0.5 px-1 -mx-1 rounded-md hover:bg-muted/40 transition-colors">
       <span className="text-[11px] text-muted-foreground shrink-0">{label}</span>
-      <span className={`text-[11px] ${valueClass || 'text-foreground'} ${mono ? 'font-mono' : ''} truncate max-w-[110px] text-right`} title={value}>{value}</span>
+      <span className={`text-[11px] ${valueClass || 'text-foreground'} ${mono ? 'font-mono' : ''} truncate max-w-[120px] text-right`} title={value}>{value}</span>
     </div>
   )
 }
@@ -619,16 +641,11 @@ function InfoRow({ label, value, valueClass, mono }: {
 // 路径条
 function PathBar({ icon: Icon, label, value, title }: { icon?: any; label: string; value: string; title?: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-gradient-to-r from-muted/50 to-muted/20 px-3 py-2">
       <span className="text-xs font-medium text-foreground/70 flex items-center gap-1.5 shrink-0">
-        {Icon && <Icon size={13} className="text-primary" />}{label}
+        {Icon && <span className="flex h-5 w-5 items-center justify-center rounded-md bg-primary/10"><Icon size={12} className="text-primary" /></span>}{label}
       </span>
-      <code
-        className="text-xs font-mono text-foreground/90 truncate max-w-[220px]"
-        title={title || value}
-      >
-        {value}
-      </code>
+      <code className="text-xs font-mono text-foreground/90 truncate max-w-[220px]" title={title || value}>{value}</code>
     </div>
   )
 }

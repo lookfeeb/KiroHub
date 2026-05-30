@@ -37,8 +37,6 @@ export default defineConfig({
       'react-dom',
       'lucide-react',
       '@tauri-apps/api',
-      'i18next',
-      'react-i18next',
     ],
     // 强制预构建，避免首次启动慢
     force: false,
@@ -46,40 +44,22 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'terser' : false,
+    minify: !process.env.TAURI_DEBUG ? 'oxc' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
-    terserOptions: {
-      compress: {
-        drop_console: true,      // 移除 console.log
-        drop_debugger: true,     // 移除 debugger
-        pure_funcs: ['console.info', 'console.debug', 'console.warn'],
-      },
-      mangle: {
-        toplevel: true,          // 混淆顶级变量名
-        safari10: true,
-      },
-      format: {
-        comments: false,         // 移除所有注释
-      },
-    },
     // 代码分割优化
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor': ['react', 'react-dom'],
-          'icons': ['lucide-react'],
-          'tauri': [
-            '@tauri-apps/api',
-            '@tauri-apps/plugin-dialog',
-            '@tauri-apps/plugin-fs',
-            '@tauri-apps/plugin-opener',
-            '@tauri-apps/plugin-process',
-            '@tauri-apps/plugin-shell',
-            '@tauri-apps/plugin-updater'
-          ],
-          'i18n': ['i18next', 'react-i18next'],
-        }
-      }
+        // Oxc 原生压缩器：保留移除 console / debugger 的行为
+        minify: process.env.TAURI_DEBUG
+          ? false
+          : { compress: { dropConsole: true, dropDebugger: true }, mangle: true },
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor'
+          if (id.includes('lucide-react')) return 'icons'
+          if (id.includes('@tauri-apps')) return 'tauri'
+        },
+      },
     },
     // 大项目可关闭压缩报告加速构建
     reportCompressedSize: false,
