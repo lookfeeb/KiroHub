@@ -370,6 +370,6 @@ export const messages: Record<string, string> = {
   "toast.success": "操作成功",
   "toast.error": "操作失败",
   "session.title": "会话管理",
-  "session.subtitle": "管理 $t(common.productName) 的会话",
+  "session.subtitle": "统一管理 Kiro / Codex / Claude / Antigravity 的历史会话",
   "home.expires": "到期"
 }

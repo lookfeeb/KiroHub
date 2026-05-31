@@ -99,3 +99,10 @@ pub async fn search_sessions(
     
     Ok(results)
 }
+
+/// 失效外部会话(Codex/Claude/Antigravity)缓存，供刷新按钮强制重扫
+#[tauri::command]
+pub async fn refresh_session_cache() -> Result<(), String> {
+    crate::services::external_sessions::invalidate_cache();
+    Ok(())
+}

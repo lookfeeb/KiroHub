@@ -17,7 +17,7 @@ export interface SessionSummary {
   fileSize: number
   createdAt?: number
   modifiedAt?: number
-  source?: 'ide' | 'cli'
+  source?: 'ide' | 'cli' | 'codex' | 'claude' | 'antigravity'
 }
 
 export interface HistoryItem {

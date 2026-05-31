@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Server, KeyRound, ShieldCheck, Loader2, RefreshCw, Globe, TerminalSquare, Boxes, Power, Check, CircleCheck, Trash2 } from 'lucide-react'
+import { Server, KeyRound, ShieldCheck, Loader2, RefreshCw, Globe, TerminalSquare, Boxes, Check, CircleCheck, Trash2 } from 'lucide-react'
 import { DialogRoot, DialogContent, DialogBody, DialogTitle } from '../../shared/dialog'
 import { useDialog } from '../../../contexts/DialogContext'
 
@@ -130,7 +130,7 @@ function McpToolsModal({ open, onClose }: { open: boolean; onClose: () => void }
               <DialogTitle className="text-base leading-tight">MCP 工具</DialogTitle>
               <div className="flex items-center gap-1.5 mt-1.5">
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-cyan-500/12 text-cyan-600">
-                  <Power size={10} />{stats?.enabledServers ?? 0}/{stats?.totalServers ?? 0} 启用
+                  <CircleCheck size={10} />{stats?.enabledServers ?? 0}/{stats?.totalServers ?? 0} 启用
                 </span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-500/12 text-violet-600">
                   <KeyRound size={10} />{stats?.estimatedTools ?? 0} 工具

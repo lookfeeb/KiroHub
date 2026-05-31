@@ -78,7 +78,7 @@ function UpdateDialog({ updateInfo, update, onClose }) {
 
   return (
     <Dialog open={true} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" showCloseButton={false}>
+      <DialogContent className="max-w-lg sm:max-w-lg p-0 gap-0 overflow-hidden" showCloseButton={false}>
         <DialogTitle className="sr-only">发现新版本</DialogTitle>
         <DialogDescription className="sr-only">v{updateInfo?.version} 已准备好安装</DialogDescription>
         {/* 顶部横幅 */}
@@ -149,7 +149,7 @@ function UpdateDialog({ updateInfo, update, onClose }) {
                     <span className="text-sm font-medium">更新内容</span>
                   </div>
                   <div className="text-sm max-h-40 overflow-y-auto p-3 rounded-lg whitespace-pre-wrap leading-relaxed border bg-muted/50">
-                    {updateInfo.body}
+                    {updateInfo.body.replace(/^\s*#{1,6}[^\n]*\n+/, '').trim()}
                   </div>
                 </div>
               )}

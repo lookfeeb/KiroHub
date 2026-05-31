@@ -15,7 +15,7 @@ import React from 'react'
 interface ConfirmModalProps {
   type?: 'confirm' | 'success' | 'error' | 'info';
   title: string;
-  message: string;
+  message: React.ReactNode;
   rawData?: any;
   onConfirm: () => void;
   onCancel: () => void;

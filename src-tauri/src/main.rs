@@ -95,7 +95,7 @@ use commands::mcp_cmd::{
 use commands::mcp_oauth_cmd::{mcp_oauth_authorize, mcp_oauth_revoke, mcp_oauth_status};
 
 use commands::session_manager::{
-    list_workspaces, list_sessions, load_session, delete_session, delete_workspace, export_session, search_sessions, get_session_file_path,
+    list_workspaces, list_sessions, load_session, delete_session, delete_workspace, export_session, search_sessions, get_session_file_path, refresh_session_cache,
 };
 
 
@@ -543,6 +543,7 @@ fn main() {
             delete_workspace,
             export_session,
             search_sessions,
+            refresh_session_cache,
             // CLI 配置命令
             check_claude_code_installed,
             check_codex_cli_installed,

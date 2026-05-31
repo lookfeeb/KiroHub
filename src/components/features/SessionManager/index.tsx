@@ -8,12 +8,32 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Search, Trash2, MessageSquare, ChevronRight, ChevronDown, Terminal, Monitor, Folder, Copy, FileJson, FileText } from 'lucide-react'
+import { Loader2, Search, Trash2, MessageSquare, ChevronRight, ChevronDown, Folder, Copy, FileJson, FileText, RefreshCw, Check } from 'lucide-react'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useDialog } from '@/contexts/DialogContext'
 import { showSuccess, showError, showWarning } from '@/utils/toast'
 import { useTranslation } from '../../../i18n'
+
+// 顶层分组：Kiro(IDE+CLI) 合并为一组，其余各 AI 工具各自一组
+const PLATFORMS: { key: string; label: string; sources: string[]; color: string }[] = [
+  { key: 'kiro', label: 'Kiro 对话历史', sources: ['ide', 'cli'], color: 'text-blue-600 dark:text-blue-400' },
+  { key: 'codex', label: 'Codex 对话历史', sources: ['codex'], color: 'text-emerald-600 dark:text-emerald-400' },
+  { key: 'claude', label: 'Claude 对话历史', sources: ['claude'], color: 'text-orange-600 dark:text-orange-400' },
+  { key: 'antigravity', label: 'Antigravity 对话历史', sources: ['antigravity'], color: 'text-cyan-600 dark:text-cyan-400' },
+]
+
+// 来源徽标样式
+const SOURCE_META: Record<string, { label: string; cls: string }> = {
+  cli: { label: 'CLI', cls: 'border-purple-500/40 text-purple-600 dark:text-purple-400' },
+  ide: { label: 'IDE', cls: 'border-blue-500/40 text-blue-600 dark:text-blue-400' },
+  codex: { label: 'Codex', cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400' },
+  claude: { label: 'Claude', cls: 'border-orange-500/40 text-orange-600 dark:text-orange-400' },
+  antigravity: { label: 'Gemini', cls: 'border-cyan-500/40 text-cyan-600 dark:text-cyan-400' },
+}
+
+// 带前缀的来源（ide 无前缀，作为兜底）；由 SOURCE_META 派生，新增来源只改 SOURCE_META/PLATFORMS
+const PREFIXES = Object.keys(SOURCE_META).filter(k => k !== 'ide').map(k => `${k}:`)
 
 export default function SessionManager() {
   const { t } = useTranslation()
@@ -27,28 +47,58 @@ export default function SessionManager() {
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkspaceHashes, setSelectedWorkspaceHashes] = useState<Set<string>>(new Set())
-  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set(['ide', 'cli']))
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [refreshOk, setRefreshOk] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // 静默刷新：不切换全局 loading，刷新完成后短暂显示绿色勾
+  const handleRefresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await sessionApi.refreshSessionCache()
+      const data = await sessionApi.listWorkspaces()
+      setWorkspaces(data)
+      await Promise.all(data.map(ws => loadSessionsForWorkspace(ws)))
+      setRefreshOk(true)
+      setTimeout(() => setRefreshOk(false), 1500)
+    } catch (error) {
+      showError('刷新失败：' + error)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   // 加载 workspaces
   useEffect(() => {
     loadWorkspaces()
   }, [])
 
-  const toggleWorkspace = async (workspaceHash: string) => {
-    const newExpanded = new Set(expandedWorkspaces)
+  const toggleDir = (key: string) => {
+    setExpandedWorkspaces(prev => {
+      const n = new Set(prev)
+      if (n.has(key)) n.delete(key)
+      else n.add(key)
+      return n
+    })
+  }
 
-    if (newExpanded.has(workspaceHash)) {
-      // 折叠
-      newExpanded.delete(workspaceHash)
-    } else {
-      // 展开 - 加载该工作区的 sessions
-      newExpanded.add(workspaceHash)
-      if (!workspaceSessions.has(workspaceHash)) {
-        await loadSessionsForWorkspace(workspaceHash)
-      }
-    }
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups(prev => {
+      const n = new Set(prev)
+      if (n.has(key)) n.delete(key)
+      else n.add(key)
+      return n
+    })
+  }
 
-    setExpandedWorkspaces(newExpanded)
+  const toggleSelectHashes = (hashes: string[]) => {
+    setSelectedWorkspaceHashes(prev => {
+      const n = new Set(prev)
+      const all = hashes.length > 0 && hashes.every(h => n.has(h))
+      hashes.forEach(h => all ? n.delete(h) : n.add(h))
+      return n
+    })
   }
 
   const loadSessionsForWorkspace = async (workspaceHash: string) => {
@@ -61,22 +111,26 @@ export default function SessionManager() {
     }
   }
 
-  const sourceOf = (hash: string): 'ide' | 'cli' => (hash.startsWith('cli:') ? 'cli' : 'ide')
-
-  const toggleSource = (src: string) => {
-    setExpandedSources(prev => {
-      const n = new Set(prev)
-      if (n.has(src)) n.delete(src)
-      else n.add(src)
-      return n
-    })
+  const sourceOf = (hash: string): string => {
+    const p = PREFIXES.find(p => hash.startsWith(p))
+    return p ? p.slice(0, -1) : 'ide'
   }
 
+  // 工作目录（合并同源同目录）：取解码后的完整路径并归一化作为分组键
+  const dirPathOf = (hash: string): string => {
+    const p = PREFIXES.find(p => hash.startsWith(p))
+    if (p) return hash.slice(p.length)
+    try { return atob(hash.replace(/_+$/, '')) } catch { return hash }
+  }
+  const dirKeyOf = (hash: string) =>
+    dirPathOf(hash).replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase()
+
   const decodeWorkspaceName = (hash: string) => {
-    if (hash.startsWith('cli:')) {
-      const cwd = hash.slice(4)
+    const p = PREFIXES.find(p => hash.startsWith(p))
+    if (p) {
+      const cwd = hash.slice(p.length)
       const parts = cwd.split(/[/\\]/).filter(Boolean)
-      return parts[parts.length - 1] || cwd || 'CLI'
+      return parts[parts.length - 1] || cwd || (SOURCE_META[p.slice(0, -1)]?.label ?? p.slice(0, -1))
     }
     try {
       // 移除末尾的 __ 或 _
@@ -127,45 +181,23 @@ export default function SessionManager() {
     }
   }
 
-  const handleDeleteWorkspace = async (workspaceHash: string) => {
-    const workspaceName = decodeWorkspaceName(workspaceHash)
-
+  const handleDeleteDir = async (hashes: string[], name: string, platformLabel: string, platformColor: string) => {
     const confirmed = await showConfirm(
-      '删除工作区',
-      `确定要删除工作区 "${workspaceName}" 及其所有会话吗？\n\n此操作不可恢复！`
+      '删除工作目录',
+      <>确定要删除 <span className={`font-semibold ${platformColor}`}>{platformLabel}</span> 工作区 “{name}” 及其所有会话吗？{'\n\n'}此操作不可恢复！</>
     )
-
     if (!confirmed) return
-
     try {
       setLoading(true)
-
-      // 直接删除整个工作区目录
-      await sessionApi.deleteWorkspace(workspaceHash)
-
-      // 重新加载工作区列表
+      for (const h of hashes) await sessionApi.deleteWorkspace(h)
       await loadWorkspaces()
-
-      // 清空相关状态
-      setExpandedWorkspaces(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(workspaceHash)
-        return newSet
-      })
-      setWorkspaceSessions(prev => {
-        const newMap = new Map(prev)
-        newMap.delete(workspaceHash)
-        return newMap
-      })
-      if (selectedWorkspace === workspaceHash) {
-        setSelectedWorkspace(null)
-        setSelectedSession(null)
-      }
-
-      showSuccess(`成功删除工作区 "${workspaceName}"`)
+      setExpandedWorkspaces(prev => { const n = new Set(prev); n.delete(dirKeyOf(hashes[0])); return n })
+      setWorkspaceSessions(prev => { const m = new Map(prev); hashes.forEach(h => m.delete(h)); return m })
+      setSelectedWorkspaceHashes(prev => { const n = new Set(prev); hashes.forEach(h => n.delete(h)); return n })
+      if (selectedWorkspace && hashes.includes(selectedWorkspace)) { setSelectedWorkspace(null); setSelectedSession(null) }
+      showSuccess(`成功删除工作目录 "${name}"`)
     } catch (error) {
-      console.error('Failed to delete workspace:', error)
-      showError('删除工作区失败：' + error)
+      showError('删除失败：' + error)
     } finally {
       setLoading(false)
     }
@@ -193,24 +225,6 @@ export default function SessionManager() {
     } catch (error) {
       console.error('Failed to delete session:', error)
       showError('删除失败：' + error)
-    }
-  }
-
-  const toggleWorkspaceSelection = (workspaceHash: string) => {
-    const newSelected = new Set(selectedWorkspaceHashes)
-    if (newSelected.has(workspaceHash)) {
-      newSelected.delete(workspaceHash)
-    } else {
-      newSelected.add(workspaceHash)
-    }
-    setSelectedWorkspaceHashes(newSelected)
-  }
-
-  const toggleSelectAllWorkspaces = () => {
-    if (selectedWorkspaceHashes.size === workspaces.length) {
-      setSelectedWorkspaceHashes(new Set())
-    } else {
-      setSelectedWorkspaceHashes(new Set(workspaces))
     }
   }
 
@@ -295,6 +309,16 @@ export default function SessionManager() {
       .filter(session => session.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : []
 
+  // 分组列表 = 已知 PLATFORMS + 任何后端新增但前端未登记的来源（自动兜底成组，无需改代码）
+  const allPlatforms = (() => {
+    const known = new Set(PLATFORMS.flatMap(p => p.sources))
+    const extra = Array.from(new Set(workspaces.map(sourceOf))).filter(s => !known.has(s))
+    return [
+      ...PLATFORMS,
+      ...extra.map(s => ({ key: s, label: `${SOURCE_META[s]?.label ?? s} 对话历史`, sources: [s], color: 'text-foreground' })),
+    ]
+  })()
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -318,16 +342,14 @@ export default function SessionManager() {
     return text.length > 60 ? text.slice(0, 60) + '…' : text
   }
 
-  const renderSourceBadge = (s?: string) => (
-    <Badge
-      variant="outline"
-      className={`text-xs h-4 px-1.5 ${s === 'cli'
-        ? 'border-purple-500/40 text-purple-600 dark:text-purple-400'
-        : 'border-blue-500/40 text-blue-600 dark:text-blue-400'}`}
-    >
-      {s === 'cli' ? 'CLI' : 'IDE'}
-    </Badge>
-  )
+  const renderSourceBadge = (s?: string) => {
+    const m = SOURCE_META[s ?? 'ide'] ?? SOURCE_META.ide
+    return (
+      <Badge variant="outline" className={`text-xs h-4 px-1.5 ${m.cls}`}>
+        {m.label}
+      </Badge>
+    )
+  }
 
   // 获取工作区的会话列表
   const getWorkspaceSessions = (workspaceHash: string) => {
@@ -362,14 +384,13 @@ export default function SessionManager() {
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                {workspaces.length > 0 && (
-                  <button
-                    onClick={toggleSelectAllWorkspaces}
-                    className="h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                  >
-                    {selectedWorkspaceHashes.size === workspaces.length ? '取消全选' : '全选'}
-                  </button>
-                )}
+                <button
+                  onClick={handleRefresh}
+                  title="刷新列表"
+                  className={`inline-flex items-center justify-center h-6 w-6 rounded-md transition-colors ${refreshOk ? 'text-green-500' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                >
+                  {refreshOk ? <Check className="h-3.5 w-3.5" /> : <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />}
+                </button>
                 {selectedWorkspaceHashes.size > 0 && (
                   <button
                     onClick={handleBatchDeleteWorkspaces}
@@ -452,63 +473,79 @@ export default function SessionManager() {
                 </div>
               )}
 
-              {/* 正常模式：树形列表 —— 来源分组 → 工作区 → 会话 */}
-              {!searchQuery && (['cli', 'ide'] as const).map(src => {
-                const groupWorkspaces = workspaces.filter(w => sourceOf(w) === src)
-                if (groupWorkspaces.length === 0) return null
-                const groupOpen = expandedSources.has(src)
+              {/* 正常模式：分组(平台) → 工作目录 → 会话 */}
+              {!searchQuery && allPlatforms.map(platform => {
+                const platWorkspaces = workspaces.filter(w => platform.sources.includes(sourceOf(w)))
+                if (platWorkspaces.length === 0) return null
+                const groups = new Map<string, string[]>()
+                platWorkspaces.forEach(w => {
+                  const k = dirKeyOf(w)
+                  if (!groups.has(k)) groups.set(k, [])
+                  groups.get(k)!.push(w)
+                })
+                const dirs = Array.from(groups.entries())
+                  .map(([key, hashes]) => ({ key: platform.key + '|' + key, hashes, name: decodeWorkspaceName(hashes[0]) }))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                const open = !collapsedGroups.has(platform.key)
+                const allChecked = platWorkspaces.every(h => selectedWorkspaceHashes.has(h))
                 return (
-                  <div key={src}>
-                    {/* 分组头 */}
-                    <button
-                      onClick={() => toggleSource(src)}
-                      className="w-full flex items-center gap-1.5 px-1.5 h-7 rounded-md hover:bg-muted/60 transition-colors"
-                    >
-                      <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground/70 shrink-0 transition-transform ${groupOpen ? 'rotate-90' : ''}`} />
-                      {src === 'cli'
-                        ? <Terminal className="h-3.5 w-3.5 text-primary shrink-0" />
-                        : <Monitor className="h-3.5 w-3.5 text-primary shrink-0" />}
-                      <span className="text-xs font-semibold text-foreground">{src === 'cli' ? 'Kiro CLI' : 'Kiro IDE'}</span>
-                      <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">{groupWorkspaces.length}</span>
-                    </button>
-
-                    {/* 工作区 + 会话 */}
-                    {groupOpen && (
+                  <div key={platform.key}>
+                    {/* 分组头 + 全选框 */}
+                    <div className={`w-full flex items-center gap-1.5 px-1.5 h-7 rounded-md transition-colors ${open ? 'bg-muted/50' : 'hover:bg-muted/60'}`}>
+                      <button onClick={() => toggleGroup(platform.key)} className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer">
+                        <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? `rotate-90 ${platform.color}` : 'text-muted-foreground/70'}`} />
+                        <span className={`text-xs font-semibold truncate ${open ? platform.color : 'text-foreground'}`}>{platform.label}</span>
+                      </button>
+                      <Checkbox
+                        checked={allChecked}
+                        onCheckedChange={() => toggleSelectHashes(platWorkspaces)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 cursor-pointer"
+                      />
+                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{dirs.length}</span>
+                    </div>
+                    {open && (
                       <div className="mt-0.5">
-                        {groupWorkspaces.map(workspace => {
-                          const isExpanded = expandedWorkspaces.has(workspace)
-                          const sessions = getWorkspaceSessions(workspace)
-                          const checked = selectedWorkspaceHashes.has(workspace)
+                        {dirs.map(({ key, hashes, name }) => {
+                          const isExpanded = expandedWorkspaces.has(key)
+                          const sessions = hashes.flatMap(h => getWorkspaceSessions(h))
+                          const checked = hashes.every(h => selectedWorkspaceHashes.has(h))
                           return (
-                            <div key={workspace}>
-                              {/* 工作区行 */}
+                            <div key={key}>
+                              {/* 工作目录行 */}
                               <div
                                 className={`group flex items-center gap-1 h-9 pl-2.5 pr-1.5 rounded-lg cursor-pointer transition-all ${
                                   checked ? 'bg-primary/[0.07] hover:bg-primary/10' : 'hover:bg-muted/60'
                                 }`}
-                                onClick={() => toggleWorkspace(workspace)}
-                                title={workspace}
+                                onClick={() => toggleDir(key)}
+                                title={dirPathOf(hashes[0])}
                               >
                                 <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground/70 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                                <Checkbox
-                                  checked={checked}
-                                  onCheckedChange={() => toggleWorkspaceSelection(workspace)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className={`shrink-0 cursor-pointer transition-opacity ${checked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                                />
                                 <span className={`flex h-6 w-6 items-center justify-center rounded-md shrink-0 transition-colors ${isExpanded ? 'bg-primary/12 text-primary' : 'text-muted-foreground'}`}>
                                   <Folder className="h-3.5 w-3.5" />
                                 </span>
-                                <span className="flex-1 min-w-0 truncate text-xs font-medium text-foreground">
-                                  {decodeWorkspaceName(workspace)}
-                                </span>
+                                <span className="flex-1 min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+                                {Array.from(new Set(hashes.map(sourceOf))).sort().map(s => (
+                                  <span key={s} className="shrink-0">{renderSourceBadge(s)}</span>
+                                ))}
                                 {sessions.length > 0 && (
                                   <span className="inline-flex items-center h-5 px-1.5 rounded-full bg-muted text-[10px] font-medium text-muted-foreground tabular-nums shrink-0">{sessions.length}</span>
                                 )}
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={() => setSelectedWorkspaceHashes(prev => {
+                                    const n = new Set(prev)
+                                    const all = hashes.every(h => n.has(h))
+                                    hashes.forEach(h => all ? n.delete(h) : n.add(h))
+                                    return n
+                                  })}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="shrink-0 cursor-pointer"
+                                />
                                 <button
                                   className="h-6 w-6 shrink-0 rounded-md inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/12 hover:text-destructive transition-all"
-                                  onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(workspace) }}
-                                  title="删除工作区"
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteDir(hashes, name, platform.label, platform.color) }}
+                                  title="删除工作目录"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </button>
@@ -532,18 +569,19 @@ export default function SessionManager() {
                                           className={`group relative flex items-center h-8 pl-10 pr-1.5 cursor-pointer transition-colors before:absolute before:left-[26px] before:top-1/2 before:-translate-y-1/2 before:h-1.5 before:w-1.5 before:rounded-full ${active
                                             ? 'bg-primary/10 before:bg-primary'
                                             : 'hover:bg-muted/50 before:bg-muted-foreground/30'}`}
-                                          onClick={() => handleSelectSession(workspace, session)}
+                                          onClick={() => handleSelectSession(session.workspaceHash, session)}
                                           title={cleanTitle(session.title)}
                                         >
                                           <span className={`flex-1 min-w-0 truncate text-xs ${active ? 'text-primary font-medium' : 'text-foreground/90'}`}>
                                             {cleanTitle(session.title)}
                                           </span>
-                                          <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground tabular-nums ml-2 shrink-0 group-hover:opacity-0 transition-opacity">
+                                          {renderSourceBadge(session.source)}
+                                          <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground tabular-nums ml-1.5 shrink-0 group-hover:opacity-0 transition-opacity">
                                             <MessageSquare className="h-2.5 w-2.5" />{session.messageCount}
                                           </span>
                                           <button
                                             className="absolute right-1.5 h-5 w-5 rounded inline-flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground transition-all"
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteSession(workspace, session) }}
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.workspaceHash, session) }}
                                             title="删除会话"
                                           >
                                             <Trash2 className="h-3 w-3" />
@@ -582,7 +620,7 @@ export default function SessionManager() {
                     onClick={async () => {
                       try {
                         const path = await sessionApi.getSessionFilePath(selectedWorkspaceHash, selectedSession.sessionId)
-                        await navigator.clipboard.writeText(path)
+                        await navigator.clipboard.writeText(`"${path}"`)
                         showSuccess('已复制文件路径')
                       } catch (e) {
                         showError('复制失败：' + String(e))

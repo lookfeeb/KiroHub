@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use anyhow::{Result, Context};
 use crate::models::ide_session::{IdeSession, SessionSummary, HistoryItem, Message, ContentItem};
+use super::external_sessions;
 
 // 安全限制
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50MB
@@ -120,11 +121,16 @@ impl SessionStorage {
         cli_ws.extend(workspaces);
         workspaces = cli_ws;
 
+        workspaces.extend(external_sessions::list_workspaces());
+
         Ok(workspaces)
     }
     
     /// 列出指定 workspace 的所有 sessions
     pub fn list_sessions(&self, workspace_hash: &str) -> Result<Vec<SessionSummary>> {
+        if external_sessions::handles(workspace_hash) {
+            return Ok(external_sessions::list_sessions(workspace_hash));
+        }
         if let Some(cwd) = workspace_hash.strip_prefix(CLI_PREFIX) {
             return Ok(self.collect_cli_sessions(Some(cwd)));
         }
@@ -218,6 +224,9 @@ impl SessionStorage {
     
     /// 返回 session 文件在磁盘上的真实完整路径
     pub fn get_session_file_path(&self, workspace_hash: &str, session_id: &str) -> Result<String> {
+        if external_sessions::handles(workspace_hash) {
+            return external_sessions::file_path(workspace_hash, session_id);
+        }
         if !Self::is_safe_path_component(session_id) {
             return Err(anyhow::anyhow!("Invalid session id"));
         }
@@ -239,6 +248,9 @@ impl SessionStorage {
 
     /// 加载完整 session
     pub fn load_session(&self, workspace_hash: &str, session_id: &str) -> Result<IdeSession> {
+        if external_sessions::handles(workspace_hash) {
+            return external_sessions::load_session(workspace_hash, session_id);
+        }
         if workspace_hash.starts_with(CLI_PREFIX) {
             return self.load_cli_session(session_id);
         }
@@ -268,6 +280,9 @@ impl SessionStorage {
     
     /// 删除 session
     pub fn delete_session(&self, workspace_hash: &str, session_id: &str) -> Result<()> {
+        if external_sessions::handles(workspace_hash) {
+            return external_sessions::delete_session(workspace_hash, session_id);
+        }
         if workspace_hash.starts_with(CLI_PREFIX) {
             return self.delete_cli_session(session_id);
         }
@@ -289,6 +304,9 @@ impl SessionStorage {
     
     /// 删除整个工作区目录
     pub fn delete_workspace(&self, workspace_hash: &str) -> Result<()> {
+        if external_sessions::handles(workspace_hash) {
+            return external_sessions::delete_workspace(workspace_hash);
+        }
         if let Some(cwd) = workspace_hash.strip_prefix(CLI_PREFIX) {
             return self.delete_cli_workspace(cwd);
         }

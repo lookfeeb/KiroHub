@@ -45,4 +45,9 @@ export const sessionApi = {
   async searchSessions(query: string): Promise<SessionSummary[]> {
     return invoke('search_sessions', { query })
   },
+
+  // 失效外部会话缓存（强制重扫）
+  async refreshSessionCache(): Promise<void> {
+    return invoke('refresh_session_cache')
+  },
 }
