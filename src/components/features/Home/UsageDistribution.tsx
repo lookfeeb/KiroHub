@@ -1,12 +1,12 @@
 import { PieChart, BarChart2 } from 'lucide-react'
 import { useMemo } from 'react'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
+import { usePrivacy } from '../../../contexts/usePrivacy'
 import { formatUsage, getAccountDisplayName, getQuota, getUsed } from '../../../utils/accountStats'
 import { useApp } from '../../../hooks/useApp'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
 
-import { Card, CardHeader, CardContent } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
+import { Card, CardHeader, CardContent } from '@/components/ui/data-display/card'
+import { Progress } from '@/components/ui/feedback/progress'
 // 使用率分布统计
 function UsageDistribution({ tokens, colors, t }) {
   const { maskEmail } = usePrivacy()

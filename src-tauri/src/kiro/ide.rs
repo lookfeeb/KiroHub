@@ -84,8 +84,21 @@ pub async fn get_kiro_local_token() -> Option<KiroLocalToken> {
             .join("cache")
             .join("kiro-auth-token.json");
 
-        let content = std::fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&content).ok()
+        if !path.exists() {
+            return None;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                log::warn!("读取 Kiro 本地 token 失败 ({}): {error}", path.display());
+                return None;
+            }
+        };
+        serde_json::from_str(&content)
+            .map_err(|error| {
+                log::warn!("解析 Kiro 本地 token 失败 ({}): {error}", path.display());
+            })
+            .ok()
     })
     .await
     .ok()
@@ -112,8 +125,21 @@ pub async fn get_client_registration(client_id_hash: &str) -> Option<ClientRegis
             .join("cache")
             .join(format!("{hash}.json"));
 
-        let content = std::fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&content).ok()
+        if !path.exists() {
+            return None;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                log::warn!("读取 Kiro client registration 失败 ({}): {error}", path.display());
+                return None;
+            }
+        };
+        serde_json::from_str(&content)
+            .map_err(|error| {
+                log::warn!("解析 Kiro client registration 失败 ({}): {error}", path.display());
+            })
+            .ok()
     })
     .await
     .ok()

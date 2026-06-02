@@ -184,8 +184,7 @@ pub(crate) fn extract_tool_uses(message: &NormalizedMessage) -> Option<Vec<KiroT
         .iter()
         .map(|tool_call| KiroToolUse {
             name: tool_call.function.name.clone(),
-            input: serde_json::from_str(&tool_call.function.arguments)
-                .unwrap_or_else(|_| json!({})),
+            input: parse_tool_arguments(&tool_call.function.arguments, "converter.content"),
             tool_use_id: tool_call.id.clone(),
         })
         .collect();

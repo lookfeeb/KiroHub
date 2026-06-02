@@ -85,7 +85,7 @@ export function TokenJsonView({ account, defaultExpanded = false }) {
   }), [])
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [copied, setCopied] = useState(false)
-  const copiedTimerRef = useRef(null)
+  const copiedTimerRef = useRef<NodeJS.Timeout | null>(null)
   
   const credentialsJson = useMemo(() => buildCredentialsJson(account), [account])
   const jsonStr = useMemo(() => JSON.stringify(credentialsJson, null, 2), [credentialsJson])
@@ -96,7 +96,10 @@ export function TokenJsonView({ account, defaultExpanded = false }) {
     navigator.clipboard.writeText(jsonStr).catch(e => console.error('Copy failed:', e))
     setCopied(true)
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-    copiedTimerRef.current = setTimeout(() => setCopied(false), 1500)
+    copiedTimerRef.current = setTimeout(() => {
+      setCopied(false)
+      copiedTimerRef.current = null
+    }, 1500)
   }
   
   return (

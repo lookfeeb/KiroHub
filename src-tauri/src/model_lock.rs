@@ -49,7 +49,11 @@ pub fn start_model_lock_task(app_handle: AppHandle) {
                 continue;
             }
 
-            let locked_model = settings.locked_model.unwrap();
+            let Some(locked_model) = settings.locked_model else {
+                log::debug!("[ModelLock] 模型锁定已启用但未配置模型，等待 30 分钟后重新检查");
+                tokio::time::sleep(Duration::from_secs(1800)).await;
+                continue;
+            };
             log::info!("[ModelLock] 模型锁定已启用，锁定模型: {}", locked_model);
 
             // 创建定时器（每 30 秒检查一次）
@@ -79,7 +83,10 @@ pub fn start_model_lock_task(app_handle: AppHandle) {
                 }
 
                 // 如果锁定的模型改变了，退出内层循环，重新初始化
-                let current_locked_model = current_settings.locked_model.unwrap();
+                let Some(current_locked_model) = current_settings.locked_model else {
+                    log::info!("[ModelLock] 模型锁定配置缺少模型，退出本轮锁定");
+                    break;
+                };
                 if current_locked_model != locked_model {
                     log::info!(
                         "[ModelLock] 锁定模型已改变: {} -> {}",

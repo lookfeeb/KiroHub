@@ -50,12 +50,21 @@ function BatchEditModal({ accountIds, accounts = [], onClose, onSuccess }: Batch
   const tagInputContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    let mounted = true
+
     Promise.all([getTags(), getGroups()])
       .then(([tagsData, groupsData]) => {
+        if (!mounted) return
         setTags(tagsData)
         setGroups(groupsData)
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('加载批量编辑标签/分组失败:', err)
+      })
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   // 点击外部关闭标签下拉

@@ -25,30 +25,34 @@ struct PendingIdcLogin {
 static PENDING_IDC_LOGIN: std::sync::OnceLock<std::sync::Mutex<Option<PendingIdcLogin>>> =
     std::sync::OnceLock::new();
 
-fn set_pending_login(tx: CallbackSender, cancelled: Arc<AtomicBool>) {
+fn take_callback_sender(tx: &CallbackSender) -> Option<oneshot::Sender<Result<(String, String), String>>> {
+    tx.lock().ok()?.take()
+}
+
+fn send_callback_result(tx: &CallbackSender, result: Result<(String, String), String>) {
+    if let Some(sender) = take_callback_sender(tx) {
+        let _ = sender.send(result);
+    }
+}
+
+fn set_pending_login(tx: CallbackSender, cancelled: Arc<AtomicBool>) -> Result<(), String> {
     let storage = PENDING_IDC_LOGIN.get_or_init(|| std::sync::Mutex::new(None));
     let mut guard = storage
         .lock()
-        .expect("Failed to acquire pending IdC login lock");
+        .map_err(|_| "IdC 登录状态锁已损坏".to_string())?;
     if let Some(previous) = guard.take() {
         previous.cancelled.store(true, Ordering::SeqCst);
-        if let Some(previous_tx) = previous
-            .tx
-            .lock()
-            .expect("Failed to acquire callback lock")
-            .take()
-        {
-            let _ = previous_tx.send(Err("登录已取消".to_string()));
-        }
+        send_callback_result(&previous.tx, Err("登录已取消".to_string()));
     }
     *guard = Some(PendingIdcLogin { tx, cancelled });
+    Ok(())
 }
 
 fn clear_pending_login() {
     if let Some(storage) = PENDING_IDC_LOGIN.get() {
-        *storage
-            .lock()
-            .expect("Failed to acquire pending IdC login lock") = None;
+        if let Ok(mut guard) = storage.lock() {
+            *guard = None;
+        }
     }
 }
 
@@ -56,22 +60,15 @@ pub fn cancel_pending_login() -> bool {
     let Some(storage) = PENDING_IDC_LOGIN.get() else {
         return false;
     };
-    let mut guard = storage
-        .lock()
-        .expect("Failed to acquire pending IdC login lock");
+    let Ok(mut guard) = storage.lock() else {
+        return false;
+    };
     let Some(pending) = guard.take() else {
         return false;
     };
 
     pending.cancelled.store(true, Ordering::SeqCst);
-    if let Some(tx) = pending
-        .tx
-        .lock()
-        .expect("Failed to acquire callback lock")
-        .take()
-    {
-        let _ = tx.send(Err("登录已取消".to_string()));
-    }
+    send_callback_result(&pending.tx, Err("登录已取消".to_string()));
     true
 }
 
@@ -124,10 +121,12 @@ fn handle_oauth_callback(
     let url = request.url().to_string();
     let result = parse_callback_url(&url, expected_state);
 
-    let response = tiny_http::Response::from_string(build_callback_page(&result)).with_header(
+    let mut response = tiny_http::Response::from_string(build_callback_page(&result));
+    if let Ok(header) =
         tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-            .expect("Failed to create header"),
-    );
+    {
+        response = response.with_header(header);
+    }
     let _ = request.respond(response);
 
     result
@@ -197,9 +196,7 @@ fn spawn_callback_listener(
             }
 
             if start.elapsed() > timeout {
-                if let Some(tx) = tx.lock().expect("Failed to acquire callback lock").take() {
-                    let _ = tx.send(Err("授权超时".to_string()));
-                }
+                send_callback_result(&tx, Err("授权超时".to_string()));
                 break;
             }
 
@@ -210,9 +207,7 @@ fn spawn_callback_listener(
                 if url.starts_with("/oauth/callback") {
                     let result = handle_oauth_callback(request, &state);
 
-                    if let Some(tx) = tx.lock().expect("Failed to acquire callback lock").take() {
-                        let _ = tx.send(result.map(|code| (code, state.clone())));
-                    }
+                    send_callback_result(&tx, result.map(|code| (code, state.clone())));
                     break;
                 }
             }
@@ -280,13 +275,13 @@ impl AuthProvider for IdcProvider {
         println!("[IdC] Region: {region}, Start URL: {start_url}");
 
         // Step 1: 创建 AWS SSO 客户端
-        let sso_client = AWSSSOClient::new(region);
+        let sso_client = AWSSSOClient::new(region)?;
 
         // Step 2: 启动本地 HTTP 服务器接收回调
         let (tx, rx) = oneshot::channel::<Result<(String, String), String>>();
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
         let cancelled = Arc::new(AtomicBool::new(false));
-        set_pending_login(tx.clone(), cancelled.clone());
+        set_pending_login(tx.clone(), cancelled.clone())?;
         let _pending_login_guard = PendingLoginGuard;
 
         // 生成 state
@@ -395,7 +390,7 @@ impl AuthProvider for IdcProvider {
             .ok_or("Client secret is required for IdC token refresh")?;
         let region = metadata.region.as_deref().unwrap_or(&self.region);
 
-        let sso_client = AWSSSOClient::new(region);
+        let sso_client = AWSSSOClient::new(region)?;
         let token_response = sso_client
             .refresh_token(&client_id, &client_secret, refresh_token)
             .await?;
@@ -474,14 +469,16 @@ mod tests {
         set_pending_login(
             Arc::new(std::sync::Mutex::new(Some(first_tx))),
             first_cancelled.clone(),
-        );
+        )
+        .expect("first pending login should set");
 
         let (second_tx, _second_rx) = oneshot::channel::<Result<(String, String), String>>();
         let second_cancelled = Arc::new(AtomicBool::new(false));
         set_pending_login(
             Arc::new(std::sync::Mutex::new(Some(second_tx))),
             second_cancelled,
-        );
+        )
+        .expect("second pending login should replace first");
 
         assert!(first_cancelled.load(Ordering::SeqCst));
         let first_result = first_rx

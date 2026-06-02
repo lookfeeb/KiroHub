@@ -60,11 +60,11 @@ pub struct TokenResponse {
 }
 
 impl AWSSSOClient {
-    pub fn new(region: &str) -> Self {
+    pub fn new(region: &str) -> Result<Self, String> {
         let base_url = format!("https://oidc.{region}.amazonaws.com");
-        let client = build_http_client().expect("Failed to create HTTP client");
+        let client = build_http_client()?;
 
-        Self { base_url, client }
+        Ok(Self { base_url, client })
     }
 
     /// 获取 authorize URL
@@ -114,7 +114,10 @@ impl AWSSSOClient {
             })?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取客户端注册响应失败: {e}"))?;
 
         if !status.is_success() {
             // 特殊处理：用户提供的 Start URL 无效（跟 Kiro IDE 一样）
@@ -169,7 +172,10 @@ impl AWSSSOClient {
             .map_err(|e| format!("Token creation failed: {e}"))?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取 Token 创建响应失败: {e}"))?;
 
         if !status.is_success() {
             return Err(format!("Token creation failed ({status}): {text}"));
@@ -213,7 +219,10 @@ impl AWSSSOClient {
             })?;
 
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取 Token 刷新响应失败: {e}"))?;
 
         // 只打印非 200 的响应
         if !status.is_success() {

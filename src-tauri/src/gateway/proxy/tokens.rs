@@ -128,7 +128,10 @@ pub(crate) fn trim_messages_by_tokens(
             }
 
             // 确保最后一条是 user 消息（Claude API 要求）
-            let last_msg = conversation_messages.last().unwrap();
+            let Some(last_msg) = conversation_messages.last() else {
+                log::warn!("[网关] 没有对话消息可裁剪");
+                return false;
+            };
             if last_msg.role != "user" {
                 log::warn!("[网关] 最后一条消息不是 user，无法裁剪");
                 return false;
@@ -161,7 +164,11 @@ pub(crate) fn trim_messages_by_tokens(
             // 如果一条都保留不了，尝试截断最后一条 user 消息
             if kept_messages.is_empty() {
                 log::warn!("[网关] 无法保留任何消息，尝试截断最后一条 user 消息");
-                let mut last_user = conversation_messages.last().unwrap().clone();
+                let Some(last_message) = conversation_messages.last() else {
+                    log::error!("[网关] 裁剪失败：没有可截断的最后一条消息");
+                    return false;
+                };
+                let mut last_user = last_message.clone();
 
                 // 尝试截断消息内容
                 if let Some(content) = &last_user.content {
@@ -477,4 +484,3 @@ pub(crate) fn trim_kiro_payload_history(payload: &mut Value, max_bytes: usize) -
 
     trimmed
 }
-

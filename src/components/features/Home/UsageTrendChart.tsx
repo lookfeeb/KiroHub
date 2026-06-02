@@ -1,6 +1,5 @@
-﻿// 使用量趋势图组件
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+// 使用量趋势图组件
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/data-display/card'
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Calendar } from 'lucide-react'
@@ -16,11 +15,10 @@ export default function UsageTrendChart({ accounts, stats }) {
 
   // 加载并保存历史记录
   useEffect(() => {
+    let cancelled = false
+
     const loadAndSaveHistory = async () => {
       try {
-        // 加载历史记录
-        const history = await invoke('get_usage_history').catch(() => ({ entries: [] }))
-
         // 记录当天的使用量
         if (accounts.length > 0) {
           const now = new Date()
@@ -36,10 +34,14 @@ export default function UsageTrendChart({ accounts, stats }) {
 
           // 重新加载历史
           const updatedHistory = await invoke('get_usage_history').catch(() => ({ entries: [] })) as { entries: any[] }
-          setUsageHistory(updatedHistory.entries || [])
+          if (!cancelled) {
+            setUsageHistory(updatedHistory.entries || [])
+          }
         } else {
           const history = await invoke('get_usage_history').catch(() => ({ entries: [] })) as { entries: any[] }
-          setUsageHistory(history.entries || [])
+          if (!cancelled) {
+            setUsageHistory(history.entries || [])
+          }
         }
       } catch (e) {
         console.error('Failed to load usage history:', e)
@@ -47,6 +49,10 @@ export default function UsageTrendChart({ accounts, stats }) {
     }
 
     loadAndSaveHistory()
+
+    return () => {
+      cancelled = true
+    }
   }, [accounts, stats.totalQuota, stats.totalUsed])
 
   if (usageHistory.length < 1) return null

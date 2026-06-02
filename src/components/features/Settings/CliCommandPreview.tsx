@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { useAppSettings } from '../../../contexts/AppSettingsContext'
 import { useApp } from '../../../hooks/useApp'
@@ -7,6 +7,18 @@ function CliCommandPreview({ className = '' }: { className?: string }) {
   const { settings } = useAppSettings()
   const { t } = useApp()
   const [copied, setCopied] = useState(false)
+  const mountedRef = useRef(true)
+  const copiedTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (copiedTimerRef.current) {
+        clearTimeout(copiedTimerRef.current)
+      }
+    }
+  }, [])
 
   const model = settings.cliLaunchModel || ''
   const trustAllTools = !!settings.cliLaunchTrustAllTools
@@ -21,9 +33,20 @@ function CliCommandPreview({ className = '' }: { className?: string }) {
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(command)
+      if (!mountedRef.current) return
+      if (copiedTimerRef.current) {
+        clearTimeout(copiedTimerRef.current)
+      }
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch { /* ignore */ }
+      copiedTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          setCopied(false)
+          copiedTimerRef.current = null
+        }
+      }, 1500)
+    } catch (err) {
+      console.error('复制 CLI 命令失败:', err)
+    }
   }
 
   return (

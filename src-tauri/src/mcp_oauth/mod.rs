@@ -133,7 +133,10 @@ pub async fn register_client(
         .await
         .map_err(|e| format!("DCR 请求失败: {e}"))?;
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取 DCR 响应失败: {e}"))?;
     if !status.is_success() {
         return Err(format!("DCR 失败 ({status}): {text}"));
     }
@@ -220,7 +223,10 @@ async fn post_token(token_endpoint: &str, params: &[(&str, &str)]) -> Result<Tok
         .await
         .map_err(|e| format!("token 请求失败: {e}"))?;
     let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取 token 响应失败: {e}"))?;
     if !status.is_success() {
         return Err(format!("token 换取失败 ({status}): {text}"));
     }
@@ -271,12 +277,14 @@ fn wait_for_code(
                         .to_string(),
                     Err(m) => format!("<html><body><h1>授权失败</h1><p>{m}</p></body></html>"),
                 };
-                let header = tiny_http::Header::from_bytes(
+                let mut response = tiny_http::Response::from_string(page);
+                if let Ok(header) = tiny_http::Header::from_bytes(
                     &b"Content-Type"[..],
                     &b"text/html; charset=utf-8"[..],
-                )
-                .expect("header");
-                let _ = request.respond(tiny_http::Response::from_string(page).with_header(header));
+                ) {
+                    response = response.with_header(header);
+                }
+                let _ = request.respond(response);
                 return result;
             }
             let _ = request.respond(tiny_http::Response::empty(404));

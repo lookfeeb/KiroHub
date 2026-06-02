@@ -1,5 +1,5 @@
 import type React from 'react'
-import { Card, CardContent } from '../../ui/card'
+import { Card, CardContent } from '@/components/ui/data-display/card'
 
 export type SectionAccent = 'primary' | 'orange' | 'violet' | 'blue' | 'green' | 'red' | 'amber'
 

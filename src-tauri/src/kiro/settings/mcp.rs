@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::utils::fs::atomic_write;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
@@ -90,7 +91,7 @@ impl McpConfig {
         let content =
             serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-        fs::write(path, content).map_err(|e| format!("写入配置文件失败: {e}"))
+        atomic_write(path, &content, "MCP 配置文件")
     }
 
     /// 读取用户级配置（写操作使用）

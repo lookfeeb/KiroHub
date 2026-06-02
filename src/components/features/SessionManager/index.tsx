@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { sessionApi } from '@/api/sessionApi'
 import { SessionSummary, IdeSession } from '@/types/session'
-import { Card } from '@/components/ui/card'
+import { Card } from '@/components/ui/data-display/card'
 import Markdown from '../../shared/Markdown'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Button } from '@/components/ui/actions/button'
+import { Input } from '@/components/ui/forms/input'
+import { ScrollArea } from '@/components/ui/layout/scroll-area'
+import { Checkbox } from '@/components/ui/forms/checkbox'
 import { Loader2, Search, Trash2, MessageSquare, ChevronRight, ChevronDown, Folder, Copy, FileJson, FileText, RefreshCw, Check } from 'lucide-react'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -20,7 +20,7 @@ const PLATFORMS: { key: string; label: string; sources: string[]; color: string 
   { key: 'kiro', label: 'Kiro 对话历史', sources: ['ide', 'cli'], color: 'text-blue-600 dark:text-blue-400' },
   { key: 'codex', label: 'Codex 对话历史', sources: ['codex'], color: 'text-emerald-600 dark:text-emerald-400' },
   { key: 'claude', label: 'Claude 对话历史', sources: ['claude'], color: 'text-orange-600 dark:text-orange-400' },
-  { key: 'antigravity', label: 'Antigravity 对话历史', sources: ['antigravity'], color: 'text-cyan-600 dark:text-cyan-400' },
+  { key: 'antigravity', label: 'Antigravity 对话历史', sources: ['antigravity', 'antigravity-ide'], color: 'text-cyan-600 dark:text-cyan-400' },
 ]
 
 // 来源徽标样式
@@ -30,6 +30,7 @@ const SOURCE_META: Record<string, { label: string; cls: string }> = {
   codex: { label: 'Codex', cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400' },
   claude: { label: 'Claude', cls: 'border-orange-500/40 text-orange-600 dark:text-orange-400' },
   antigravity: { label: 'Gemini', cls: 'border-cyan-500/40 text-cyan-600 dark:text-cyan-400' },
+  'antigravity-ide': { label: 'AG IDE', cls: 'border-sky-500/40 text-sky-600 dark:text-sky-400' },
 }
 
 // 带前缀的来源（ide 无前缀，作为兜底）；由 SOURCE_META 派生，新增来源只改 SOURCE_META/PLATFORMS
@@ -50,6 +51,12 @@ export default function SessionManager() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [refreshOk, setRefreshOk] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshOkTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const applySessionTree = (tree: Awaited<ReturnType<typeof sessionApi.listSessionTree>>) => {
+    setWorkspaces(tree.workspaces)
+    setWorkspaceSessions(new Map(Object.entries(tree.sessionsByWorkspace)))
+  }
 
   // 静默刷新：不切换全局 loading，刷新完成后短暂显示绿色勾
   const handleRefresh = async () => {
@@ -57,11 +64,15 @@ export default function SessionManager() {
     setRefreshing(true)
     try {
       await sessionApi.refreshSessionCache()
-      const data = await sessionApi.listWorkspaces()
-      setWorkspaces(data)
-      await Promise.all(data.map(ws => loadSessionsForWorkspace(ws)))
+      applySessionTree(await sessionApi.listSessionTree())
+      if (refreshOkTimerRef.current) {
+        clearTimeout(refreshOkTimerRef.current)
+      }
       setRefreshOk(true)
-      setTimeout(() => setRefreshOk(false), 1500)
+      refreshOkTimerRef.current = setTimeout(() => {
+        setRefreshOk(false)
+        refreshOkTimerRef.current = null
+      }, 1500)
     } catch (error) {
       showError('刷新失败：' + error)
     } finally {
@@ -72,6 +83,11 @@ export default function SessionManager() {
   // 加载 workspaces
   useEffect(() => {
     loadWorkspaces()
+    return () => {
+      if (refreshOkTimerRef.current) {
+        clearTimeout(refreshOkTimerRef.current)
+      }
+    }
   }, [])
 
   const toggleDir = (key: string) => {
@@ -149,10 +165,7 @@ export default function SessionManager() {
   const loadWorkspaces = async () => {
     try {
       setLoading(true)
-      const data = await sessionApi.listWorkspaces()
-      setWorkspaces(data)
-      // 预取每个工作区的会话，使计数全自动显示（无需展开）
-      data.forEach(ws => { loadSessionsForWorkspace(ws) })
+      applySessionTree(await sessionApi.listSessionTree())
     } catch (error) {
       console.error('Failed to load workspaces:', error)
       showError('加载工作区失败：' + error)

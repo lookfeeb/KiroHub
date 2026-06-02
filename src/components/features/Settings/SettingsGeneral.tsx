@@ -1,6 +1,6 @@
-import { Clock, Globe, Search, Shield, Shuffle, AlertTriangle, Eye, EyeOff, Repeat, RefreshCw, Check, Copy, Cpu, X, FolderOpen, ExternalLink, Users, User, Languages } from 'lucide-react'
-import { Input } from '../../ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select'
+import { Clock, Globe, Search, Shield, Shuffle, AlertTriangle, Eye, EyeOff, Repeat, RefreshCw, Check, Copy, Cpu, X, FolderOpen, ExternalLink, Users, Power } from 'lucide-react'
+import { Input } from '@/components/ui/forms/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/forms/select'
 import React from 'react'
 import type { TFunc } from '../../../i18n'
 import SectionCard from './SectionCard'
@@ -29,7 +29,7 @@ interface SettingsGeneralProps {
   autoSwitchEnabled: boolean;
   autoSwitchThreshold: number;
   autoSwitchInterval: number;
-  closeToTray: boolean;
+  autostartEnabled: boolean;
   browserPath: string;
   setBrowserPath: (path: string) => void;
   originalBrowserPath: string;
@@ -54,7 +54,7 @@ interface SettingsGeneralProps {
   handleAutoSwitchEnabledChange: (checked: boolean) => void;
   handleAutoSwitchThresholdChange: (value: number) => void;
   handleAutoSwitchIntervalChange: (value: string) => void;
-  handleCloseToTrayChange: (checked: boolean) => void;
+  handleAutostartChange: (checked: boolean) => void;
   t: TFunc;
 }
 
@@ -70,7 +70,7 @@ function SettingsGeneral({
   autoSwitchEnabled,
   autoSwitchThreshold,
   autoSwitchInterval,
-  closeToTray,
+  autostartEnabled,
   browserPath,
   setBrowserPath,
   originalBrowserPath,
@@ -95,23 +95,33 @@ function SettingsGeneral({
   handleAutoSwitchEnabledChange,
   handleAutoSwitchThresholdChange,
   handleAutoSwitchIntervalChange,
-  handleCloseToTrayChange,
+  handleAutostartChange,
   t,
 }: SettingsGeneralProps) {
   const browserChanged = browserPath !== originalBrowserPath
 
   const [copiedField, setCopiedField] = React.useState<string | null>(null)
+  const mountedRef = React.useRef(true)
   const copiedTimerRef = React.useRef<NodeJS.Timeout | null>(null)
 
   React.useEffect(() => {
-    return () => { if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current) }
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    }
   }, [])
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text).catch(e => console.error('Copy failed:', e))
+    if (!mountedRef.current) return
     setCopiedField(field)
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-    copiedTimerRef.current = setTimeout(() => setCopiedField(null), 1500)
+    copiedTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setCopiedField(null)
+      }
+    }, 1500)
   }
 
   const handleSelectBrowser = (browser: BrowserInfo, useIncognito = true) => {
@@ -221,12 +231,13 @@ function SettingsGeneral({
             </div>
           )}
 
-          {/* 关闭到托盘（合并进账号管理）*/}
+          {/* 开机自启 */}
           <SwitchRow
-            checked={closeToTray}
-            onCheckedChange={handleCloseToTrayChange}
-            label={t('settings.minimizeToTray')}
-            hint={t('settings.minimizeToTrayHint')}
+            checked={autostartEnabled}
+            onCheckedChange={handleAutostartChange}
+            icon={<Power size={14} />}
+            label={t('settings.autostart')}
+            hint={t('settings.autostartHint')}
           />
         </div>
       </SectionCard>

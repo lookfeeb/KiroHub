@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { X, Download, RefreshCw, Sparkles, CheckCircle2, FileText, AlertCircle } from 'lucide-react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog'
-import { Button } from '../ui/button'
-import { Progress } from '../ui/progress'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/overlays/dialog'
+import { Button } from '@/components/ui/actions/button'
+import { Progress } from '@/components/ui/feedback/progress'
 
 function UpdateDialog({ updateInfo, update, onClose }) {
   const [installing, setInstalling] = useState(false)

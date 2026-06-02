@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../../../hooks/useApp'
 import { useAppSettings } from '../../../../contexts/AppSettingsContext'
@@ -30,6 +30,14 @@ export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
   const { settings: appSettings } = useAppSettings()
   const [switchingId, setSwitchingId] = useState(null)
   const [switchDialog, setSwitchDialog] = useState(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   // 显示切换确认弹窗
   const handleSwitchAccount = useCallback((account, initialTargets = ['ide']) => {
@@ -63,6 +71,7 @@ export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
       const ideInfo = await invoke<InstallationInfo>('check_ide_installation')
       const installed = ideInfo?.ide_installed ?? ideInfo?.ideInstalled ?? ideInfo?.installed
       if (!installed) {
+        if (!mountedRef.current) return
         // 使用后端返回的详细错误信息
         const errorMsg = ideInfo?.error_message || t('switch.ideNotInstalledMessage')
         setSwitchDialog({
@@ -105,10 +114,12 @@ export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
 
       // 同步账号（获取最新配额，如果 Token 仍然失效会再次刷新）
       const syncResult = await invoke<SyncResult>('sync_account', { id: account.id })
+      if (!mountedRef.current) return
       let refreshedAccount = syncResult.account
 
       const settings = appSettings || {}
       refreshedAccount = await applyMachineGuid(refreshedAccount, settings)
+      if (!mountedRef.current) return
 
       const switchTargets: string[] = (switchDialog as any)?.switchTargets || ['ide']
 
@@ -131,8 +142,16 @@ export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
       }
 
       // 更新当前账号标识
-      invoke('get_kiro_local_token').then(onLocalTokenChange).catch(() => onLocalTokenChange(null))
-      reloadCliToken?.()
+      invoke('get_kiro_local_token')
+        .then(token => {
+          if (mountedRef.current) onLocalTokenChange(token)
+        })
+        .catch(() => {
+          if (mountedRef.current) onLocalTokenChange(null)
+        })
+      if (mountedRef.current) {
+        reloadCliToken?.()
+      }
 
       // 从 usageData 获取配额信息（API 原始响应）
       const usageData = refreshedAccount.usageData
@@ -207,13 +226,16 @@ export function useSwitchAccount(onLocalTokenChange, reloadCliToken) {
         message,
         account: null})
     } catch (e) {
+      if (!mountedRef.current) return
       setSwitchDialog({
         type: 'error',
         title: t('switch.failed'),
         message: String(e),
         account: null})
     } finally {
-      setSwitchingId(null)
+      if (mountedRef.current) {
+        setSwitchingId(null)
+      }
     }
   }, [switchDialog, appSettings, onLocalTokenChange, reloadCliToken, t])
 

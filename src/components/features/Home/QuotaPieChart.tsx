@@ -1,9 +1,9 @@
 // 配额分布饼图组件
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/data-display/card'
 import { PieChart } from 'lucide-react'
 import { useMemo } from 'react'
 import { useApp } from '../../../hooks/useApp'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
+import { usePrivacy } from '../../../contexts/usePrivacy'
 import { getAccountDisplayName } from '../../../utils/accountStats'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
 

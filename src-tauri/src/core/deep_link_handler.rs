@@ -43,7 +43,7 @@ impl DeepLinkCallbackWaiter {
         let rx = self
             .result_rx
             .lock()
-            .expect("Failed to acquire result_rx lock")
+            .map_err(|_| "OAuth 回调接收器锁已损坏".to_string())?
             .take()
             .ok_or("Callback channel already consumed")?;
 
@@ -67,13 +67,17 @@ pub fn register_waiter(state: &str) -> DeepLinkCallbackWaiter {
 
     // 存储发送端
     let storage = PENDING_SENDER.get_or_init(|| Mutex::new(None));
-    let mut guard = storage
-        .lock()
-        .expect("Failed to acquire pending sender lock");
-    if let Some((_state, previous_tx)) = guard.take() {
-        let _ = previous_tx.send(Err("登录已取消".to_string()));
+    match storage.lock() {
+        Ok(mut guard) => {
+            if let Some((_state, previous_tx)) = guard.take() {
+                let _ = previous_tx.send(Err("登录已取消".to_string()));
+            }
+            *guard = Some((state.to_string(), tx));
+        }
+        Err(_) => {
+            let _ = tx.send(Err("OAuth 回调发送器锁已损坏".to_string()));
+        }
     }
-    *guard = Some((state.to_string(), tx));
 
     DeepLinkCallbackWaiter {
         result_rx: Arc::new(Mutex::new(Some(rx))),
@@ -86,9 +90,9 @@ pub fn cancel_waiter() -> bool {
         return false;
     };
 
-    let mut guard = storage
-        .lock()
-        .expect("Failed to acquire pending sender lock");
+    let Ok(mut guard) = storage.lock() else {
+        return false;
+    };
     let Some((_state, tx)) = guard.take() else {
         return false;
     };
@@ -126,9 +130,10 @@ pub fn handle_deep_link(url: &str) -> (bool, bool) {
         return (false, false);
     };
 
-    let mut guard = storage
-        .lock()
-        .expect("Failed to acquire pending sender lock");
+    let Ok(mut guard) = storage.lock() else {
+        log::warn!("[deep_link] PENDING_SENDER lock poisoned");
+        return (false, false);
+    };
     let Some((expected_state, tx)) = guard.take() else {
         log::warn!("[deep_link] No pending login waiter");
         return (false, false);

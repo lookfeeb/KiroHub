@@ -218,6 +218,7 @@ pub async fn proxy_handler(
     // ===== 响应缓存：查找 =====
     // 仅对非流式请求尝试缓存命中
     let cache_session_id = extract_session_id_from_request(&request).unwrap_or_default();
+    let mut cache_enabled_for_request = !request.stream && state.config.response_cache_enabled;
     let messages_hash = {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
@@ -229,7 +230,13 @@ pub async fn proxy_handler(
             }
         }
         if let Some(tools) = &request.tools {
-            hasher.update(serde_json::to_string(tools).unwrap_or_default().as_bytes());
+            match serde_json::to_string(tools) {
+                Ok(serialized) => hasher.update(serialized.as_bytes()),
+                Err(error) => {
+                    log::warn!("[响应缓存] 工具列表序列化失败，跳过本次缓存: {error}");
+                    cache_enabled_for_request = false;
+                }
+            }
         }
         format!("{:x}", hasher.finalize())
     };
@@ -239,7 +246,7 @@ pub async fn proxy_handler(
         .map(|c| c.to_string().len())
         .sum();
 
-    if !request.stream && state.config.response_cache_enabled {
+    if cache_enabled_for_request {
         let mut cache_guard = state.response_cache.lock().await;
         if let Some(cached) = cache_guard.get(
             &cache_session_id,
@@ -638,6 +645,7 @@ pub async fn proxy_handler(
         messages_hash,
         cache_message_count,
         cache_total_chars,
+        cache_enabled_for_request,
     )
     .await
 }

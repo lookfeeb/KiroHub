@@ -6,7 +6,7 @@ import { ThemeProvider } from './components/theme-provider'
 import { DialogProvider } from './contexts/DialogContext'
 import { AppSettingsProvider } from './contexts/AppSettingsContext'
 import { I18nProvider } from './i18n'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/overlays/tooltip'
 
 // 生产环境禁用浏览器快捷键
 if (import.meta.env.PROD) {

@@ -1,5 +1,5 @@
-import { Card } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Card } from '@/components/ui/data-display/card'
+import { Skeleton } from '@/components/ui/feedback/skeleton'
 
 /** 首页骨架屏：与实际 Home 布局结构对齐，避免内容到位时的视觉跳动。 */
 function LoadingSkeleton() {

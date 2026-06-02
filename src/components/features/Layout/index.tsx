@@ -3,8 +3,8 @@ import { useState, useEffect, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { ChevronLeft, ChevronRight, Monitor, Terminal } from 'lucide-react'
-import { Button } from '../../ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
+import { Button } from '@/components/ui/actions/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/overlays/tooltip'
 import { cn } from '../../../lib/utils'
 import { useApp } from '../../../hooks/useApp'
 import { routes } from '../../../routes'
@@ -40,24 +40,44 @@ function Sidebar({ activeMenu, onMenuChange }: SidebarProps) {
   const menuItems = useMenuItems()
 
   useEffect(() => {
-    invoke<LocalToken>('get_kiro_local_token').then(setLocalToken).catch(() => {})
-    getVersion().then(setVersion)
+    let cancelled = false
+
+    invoke<LocalToken>('get_kiro_local_token')
+      .then(token => { if (!cancelled) setLocalToken(token) })
+      .catch((err) => {
+        console.error('读取本地 token 失败:', err)
+      })
+    getVersion()
+      .then(version => { if (!cancelled) setVersion(version) })
+      .catch((err) => {
+        console.error('读取应用版本失败:', err)
+      })
     const saved = localStorage.getItem('sidebar-collapsed')
     if (saved === 'true') setCollapsed(true)
-    // CLI 登录态判断：已安装 + 数据库存在有效 token
-    invoke<any>('check_cli_installation').then(info => {
-      if (!info?.cli_installed) return
-      invoke<string>('get_kiro_cli_default_path').then(path => {
+
+    const loadCliStatus = async () => {
+      try {
+        const info = await invoke<any>('check_cli_installation')
+        if (cancelled || !info?.cli_installed) return
+        const path = await invoke<string>('get_kiro_cli_default_path')
         if (!path) return
-        invoke<any>('read_cli_db_snapshot', { dbPath: path }).then(snap => {
-          const entry = snap?.token_entries?.[0]
-          if (entry?.parsed_token) {
-            setCliConnected(true)
-            setCliAuth(entry.key?.includes('social') ? 'Social' : 'IdC')
-          }
-        }).catch(() => {})
-      }).catch(() => {})
-    }).catch(() => {})
+        const snap = await invoke<any>('read_cli_db_snapshot', { dbPath: path })
+        if (cancelled) return
+        const entry = snap?.token_entries?.[0]
+        if (entry?.parsed_token) {
+          setCliConnected(true)
+          setCliAuth(entry.key?.includes('social') ? 'Social' : 'IdC')
+        }
+      } catch {
+        // 侧边栏状态读取失败时保持未连接状态
+      }
+    }
+
+    loadCliStatus()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const toggleCollapsed = () => {

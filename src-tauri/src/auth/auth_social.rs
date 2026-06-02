@@ -50,7 +50,10 @@ pub async fn exchange_social_code_for_token(
         .map_err(|e| format!("OAuth token request failed: {e}"))?;
 
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("读取 OAuth token 响应失败: {e}"))?;
 
     if !status.is_success() {
         return Err(format!("OAuth token exchange failed ({status}): {body}"));

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/actions/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/overlays/dialog'
+import { Switch } from '@/components/ui/forms/switch'
 import { Activity, RefreshCw, XCircle, Trash2, Database } from 'lucide-react'
 
 interface ProcessedRequestLog {
@@ -62,6 +62,14 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
   const [displayLimit, setDisplayLimit] = useState(50)
   const [searchText, setSearchText] = useState('')
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const filteredLogs = requestLogs.filter(log => {
     if (activeFilter === 'success') return log.status < 400
@@ -77,7 +85,8 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
       || String(log.status).includes(lower)
   })
 
-  const fetchRequestLogs = async (limit?: number) => {
+  const fetchRequestLogs = useCallback(async (limit?: number) => {
+    if (!mountedRef.current) return
     setIsRefreshing(true)
     try {
       const [logs, stats, cache] = await Promise.all([
@@ -86,6 +95,7 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
         invoke<CacheStats>('get_cache_stats').catch(() => null)
       ])
 
+      if (!mountedRef.current) return
       setRequestLogs(logs.map(log => ({
         id: `${log.requestIndex}-${log.occurredAt}`,
         timestamp: log.occurredAt,
@@ -108,15 +118,20 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
     } catch (error) {
       console.error('Failed to fetch request logs:', error)
     } finally {
-      setIsRefreshing(false)
+      if (mountedRef.current) {
+        setIsRefreshing(false)
+      }
     }
-  }
+  }, [displayLimit])
 
   const handleClearCache = async () => {
     try {
       await invoke('clear_all_cache')
+      if (!mountedRef.current) return
       setCacheStats(prev => prev ? { ...prev, delta_cache_size: 0, lru_cache_size: 0 } : null)
-    } catch { /* ignore */ }
+    } catch (error) {
+      console.error('清理缓存失败:', error)
+    }
   }
 
   useEffect(() => {
@@ -124,7 +139,7 @@ export function RequestLogsDialog({ open, onOpenChange, logLevel, onLogLevelChan
     fetchRequestLogs()
     const interval = setInterval(fetchRequestLogs, 5000)
     return () => clearInterval(interval)
-  }, [open])
+  }, [fetchRequestLogs, open])
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v && onSave) onSave() }}>

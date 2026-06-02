@@ -59,20 +59,23 @@ export const runKiroCommandWithAppSettings = async ({
  * 用于 Settings tab 中大量「拨开关 → 同步落盘」的场景。
  */
 export const makeAppBoolToggle = (
-  setter: (v: boolean) => void,
+  setter: (v: boolean | ((prev: boolean) => boolean)) => void,
   field: string,
   save: (updates: any, notifyChange?: boolean) => Promise<any>,
   notifyChange = false,
 ) => async (checked: boolean) => {
   setter(checked)
-  await save({ [field]: checked }, notifyChange)
+  const saved = await save({ [field]: checked }, notifyChange)
+  if (!saved) {
+    setter((prev: boolean) => (prev === checked ? !checked : prev))
+  }
 }
 
 /**
  * 工厂：构造 `setState + 调用 Kiro IDE 命令 + 同步 appSettings` 的 boolean handler。
  */
 export const makeKiroBoolToggle = (
-  setter: (v: boolean) => void,
+  setter: (v: boolean | ((prev: boolean) => boolean)) => void,
   runCmd: (command: string, args: any, updates?: any, notifyChange?: boolean) => Promise<any>,
   command: string,
   appField: string | null = null,
@@ -80,6 +83,9 @@ export const makeKiroBoolToggle = (
 ) => async (checked: boolean) => {
   setter(checked)
   const updates = appField ? { [appField]: checked } : null
-  await runCmd(command, { [argName]: checked }, updates)
+  const saved = await runCmd(command, { [argName]: checked }, updates)
+  if (!saved) {
+    setter((prev: boolean) => (prev === checked ? !checked : prev))
+  }
 }
 

@@ -1,8 +1,8 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Square, Zap, ScrollText } from 'lucide-react'
-import { Alert as AlertPrimitive, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Alert as AlertPrimitive, AlertDescription, AlertTitle } from '@/components/ui/feedback/alert'
+import { Button } from '@/components/ui/actions/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/overlays/dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../../hooks/useApp'
 import { getQuota, getUsed, getSubPlan, formatUsage } from '../../../utils/accountStats'
@@ -77,6 +77,25 @@ function GatewayPage() {
   const [clientConfigLoading, setClientConfigLoading] = useState(false)
   const [clientConfigResults, setClientConfigResults] = useState<any[]>([])
   const [selectedClients, setSelectedClients] = useState<string[]>(['claudeCode'])
+  const mountedRef = useRef(true)
+  const deferredActionTimersRef = useRef<NodeJS.Timeout[]>([])
+  const copySuccessTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const clearDeferredActionTimers = useCallback(() => {
+    deferredActionTimersRef.current.forEach(timer => clearTimeout(timer))
+    deferredActionTimersRef.current = []
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearDeferredActionTimers()
+      if (copySuccessTimerRef.current) {
+        clearTimeout(copySuccessTimerRef.current)
+      }
+    }
+  }, [clearDeferredActionTimers])
 
   const hasConfiguredClients = useMemo(
     () => clientConfigResults.some(r => r.success),
@@ -126,10 +145,12 @@ function GatewayPage() {
     autoSaveTimer.current = setTimeout(async () => {
       try {
         await saveGatewayConfig(config)
+        if (!mountedRef.current) return
         setSavedConfigSnapshot(buildGatewayConfigSnapshot(config))
         if (status.running) {
           await stopGateway()
           const st = await startGateway(config)
+          if (!mountedRef.current) return
           const nextStatus = buildGatewayStatusState(st, st, config)
           setStatus(nextStatus)
           setAppliedRuntimeSnapshot(nextStatus.runtimeConfig ? buildGatewayRuntimeSnapshot(nextStatus.runtimeConfig) : buildGatewayRuntimeSnapshot(config))
@@ -205,6 +226,7 @@ function GatewayPage() {
   )
 
   const pushError = (msg: any) => {
+    if (!mountedRef.current) return
     const normalized = String(msg?.message || msg || '').trim()
     if (!normalized) return
     setErrorHistory(prev => mergeErrorHistory(prev, normalized, formatGatewayTimestamp(), 8))
@@ -215,6 +237,7 @@ function GatewayPage() {
     try {
       const { gatewayConfig, gatewayStatus, accounts: accountList, groups: groupList, logDir: gatewayLogDir } = await loadGatewayPageData()
 
+      if (!mountedRef.current) return
       const nextConfig = hydrateGatewayConfig(gatewayConfig)
       const nextStatus = buildGatewayStatusState(gatewayStatus, gatewayConfig, nextConfig)
       const runtimeConfig = gatewayStatus?.running && nextStatus.runtimeConfig ? nextStatus.runtimeConfig : null
@@ -233,7 +256,9 @@ function GatewayPage() {
     } catch (e) {
       pushError(e)
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
   }, [])
 
@@ -244,6 +269,7 @@ function GatewayPage() {
   }, [loadAll])
 
   const handleStatusPoll = useCallback(({ status: nextStatus, fallbackConfig, syncedAt }: any) => {
+    if (!mountedRef.current) return
     const nextState = buildGatewayStatusState(nextStatus, nextStatus, fallbackConfig)
     setStatus(nextState)
     setAppliedRuntimeSnapshot(nextState.running && nextState.runtimeConfig
@@ -290,7 +316,9 @@ function GatewayPage() {
   const handleOpenLogDir = async () => {
     try {
       const dir = await openGatewayLogDir()
-      setLogDir(String(dir || ''))
+      if (mountedRef.current) {
+        setLogDir(String(dir || ''))
+      }
     } catch (e) {
       pushError(e)
     }
@@ -308,7 +336,9 @@ function GatewayPage() {
   const handleSilentSave = async () => {
     try {
       await saveGatewayConfig(config)
-      setSavedConfigSnapshot(buildGatewayConfigSnapshot(config))
+      if (mountedRef.current) {
+        setSavedConfigSnapshot(buildGatewayConfigSnapshot(config))
+      }
     } catch (e) {
       pushError(e)
     }
@@ -319,11 +349,13 @@ function GatewayPage() {
     setSaving(true)
     try {
       await saveGatewayConfig(config)
+      if (!mountedRef.current) return
       setSavedConfigSnapshot(buildGatewayConfigSnapshot(config))
       // 保存成功后，如果网关正在运行则自动重启使配置生效
       if (status.running) {
         await stopGateway()
         const st = await startGateway(config)
+        if (!mountedRef.current) return
         const nextStatus = buildGatewayStatusState(st, st, config)
         setStatus(nextStatus)
         setAppliedRuntimeSnapshot(nextStatus.runtimeConfig ? buildGatewayRuntimeSnapshot(nextStatus.runtimeConfig) : buildGatewayRuntimeSnapshot(config))
@@ -332,7 +364,9 @@ function GatewayPage() {
     } catch (e) {
       pushError(e)
     } finally {
-      setSaving(false)
+      if (mountedRef.current) {
+        setSaving(false)
+      }
     }
   }
 
@@ -341,6 +375,7 @@ function GatewayPage() {
     setSaving(true)
     try {
       const st = await startGateway(config)
+      if (!mountedRef.current) return
       const nextStatus = buildGatewayStatusState(st, st, config)
       setStatus(nextStatus)
       setAppliedRuntimeSnapshot(nextStatus.runtimeConfig ? buildGatewayRuntimeSnapshot(nextStatus.runtimeConfig) : buildGatewayRuntimeSnapshot(config))
@@ -348,7 +383,9 @@ function GatewayPage() {
     } catch (e) {
       pushError(e)
     } finally {
-      setSaving(false)
+      if (mountedRef.current) {
+        setSaving(false)
+      }
     }
   }
 
@@ -360,6 +397,7 @@ function GatewayPage() {
         await stopGateway()
       }
       const st = await startGateway(config)
+      if (!mountedRef.current) return
       const nextStatus = buildGatewayStatusState(st, st, config)
       setStatus(nextStatus)
       setAppliedRuntimeSnapshot(nextStatus.runtimeConfig ? buildGatewayRuntimeSnapshot(nextStatus.runtimeConfig) : buildGatewayRuntimeSnapshot(config))
@@ -367,7 +405,9 @@ function GatewayPage() {
     } catch (e) {
       pushError(e)
     } finally {
-      setSaving(false)
+      if (mountedRef.current) {
+        setSaving(false)
+      }
     }
   }
 
@@ -375,13 +415,16 @@ function GatewayPage() {
     setSaving(true)
     try {
       await stopGateway()
+      if (!mountedRef.current) return
       setStatus(prev => ({ ...prev, running: false }))
       setAppliedRuntimeSnapshot(null)
       setLastStatusSyncAt(formatGatewayTimestamp())
     } catch (e) {
       pushError(e)
     } finally {
-      setSaving(false)
+      if (mountedRef.current) {
+        setSaving(false)
+      }
     }
   }
 
@@ -389,42 +432,61 @@ function GatewayPage() {
     setField('enabled', checked)
     
     // 延迟执行，确保 setField 先更新状态
-    setTimeout(async () => {
+    clearDeferredActionTimers()
+    deferredActionTimersRef.current.push(setTimeout(async () => {
       try {
         // 先保存配置
         await saveGatewayConfig({ ...config, enabled: checked })
+        if (!mountedRef.current) return
         setSavedConfigSnapshot(buildGatewayConfigSnapshot({ ...config, enabled: checked }))
         
         // 如果勾选自动启动且配置有效，立即启动反代
         if (checked && !hasFieldErrors) {
           setSaving(true)
           const st = await startGateway({ ...config, enabled: checked })
+          if (!mountedRef.current) return
           const nextStatus = buildGatewayStatusState(st, st, { ...config, enabled: checked })
           setStatus(nextStatus)
           setAppliedRuntimeSnapshot(nextStatus.runtimeConfig ? buildGatewayRuntimeSnapshot(nextStatus.runtimeConfig) : buildGatewayRuntimeSnapshot({ ...config, enabled: checked }))
           setLastStatusSyncAt(formatGatewayTimestamp())
-          setSaving(false)
+          if (mountedRef.current) {
+            setSaving(false)
+          }
         } else if (!checked && status.running) {
           // 如果取消自动启动且反代正在运行，停止反代
           setSaving(true)
           await stopGateway()
+          if (!mountedRef.current) return
           setStatus(prev => ({ ...prev, running: false }))
           setAppliedRuntimeSnapshot(null)
           setLastStatusSyncAt(formatGatewayTimestamp())
-          setSaving(false)
+          if (mountedRef.current) {
+            setSaving(false)
+          }
         }
       } catch (e) {
         pushError(e)
-        setSaving(false)
+        if (mountedRef.current) {
+          setSaving(false)
+        }
       }
-    }, 100)
+    }, 100))
   }
 
   const copyText = async (text: string, successMessage: string) => {
     try {
       await navigator.clipboard.writeText(text)
+      if (!mountedRef.current) return
+      if (copySuccessTimerRef.current) {
+        clearTimeout(copySuccessTimerRef.current)
+      }
       setCopySuccess(successMessage)
-      setTimeout(() => setCopySuccess(''), 1600)
+      copySuccessTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          setCopySuccess('')
+          copySuccessTimerRef.current = null
+        }
+      }, 1600)
     } catch (e) {
       pushError(e)
     }
@@ -440,11 +502,15 @@ function GatewayPage() {
         port: effectiveConfig.port,
         apiKey: apiKey.split('\n')[0]?.trim() || apiKey.trim(),
       })
-      setClientConfigResults(results)
+      if (mountedRef.current) {
+        setClientConfigResults(results)
+      }
     } catch (e) {
       pushError(e)
     } finally {
-      setClientConfigLoading(false)
+      if (mountedRef.current) {
+        setClientConfigLoading(false)
+      }
     }
   }
 

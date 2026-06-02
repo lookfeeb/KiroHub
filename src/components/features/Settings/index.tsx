@@ -1,14 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import { Settings as SettingsIcon, LayoutDashboard, Bell, Info, Terminal } from 'lucide-react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/navigation/tabs'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
 import { useAppSettings } from '../../../contexts/AppSettingsContext'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
+import { usePrivacy } from '../../../contexts/usePrivacy'
 import { persistAppSettings, runKiroCommandWithAppSettings, makeAppBoolToggle, makeKiroBoolToggle } from './settingsActions'
-import { isValidBrowserPath, isValidProxy } from './settingsValidators'
+import { isValidBrowserPath } from './settingsValidators'
 import SettingsGeneral from './SettingsGeneral'
 import SettingsCliLaunch from './SettingsCliLaunch'
 import SettingsNotifications from './SettingsNotifications'
@@ -20,6 +20,7 @@ function Settings() {
     const { updateSettings: updateAppSettings } = useAppSettings()
     const { privacyMode, setPrivacyMode } = usePrivacy()
     const [activeTab, setActiveTab] = useState('general')
+    const mountedRef = useRef(true)
 
     const [aiModel, setAiModel] = useState('claude-sonnet-4.5')
     const [cliLaunchModel, setCliLaunchModel] = useState('claude-sonnet-4.5')
@@ -29,9 +30,6 @@ function Settings() {
     const [autoRefreshInterval, setAutoRefreshInterval] = useState(50) // 分钟
     const [autoChangeMachineId, setAutoChangeMachineId] = useState(true) // 默认开启
     const [machineIdMode, setMachineIdMode] = useState<'random' | 'bind'>('bind') // 'random' | 'bind'
-    const [httpProxy, setHttpProxy] = useState('')
-    const [originalProxy, setOriginalProxy] = useState('') // 原始代理值，用于判断是否修改
-    const [savingProxy, setSavingProxy] = useState(false)
     const [savingModel, setSavingModel] = useState(false)
     const [browserPath, setBrowserPath] = useState('')
     const [originalBrowserPath, setOriginalBrowserPath] = useState('')
@@ -39,7 +37,6 @@ function Settings() {
     const [detectedBrowsers, setDetectedBrowsers] = useState<any[]>([])
     const [showBrowserList, setShowBrowserList] = useState(false)
     const [customKiroPath, setCustomKiroPath] = useState<string | null>(null)
-    const [detectingProxy, setDetectingProxy] = useState(false)
     const [enableCodebaseIndexing, setEnableCodebaseIndexing] = useState(true)
     const [trustedCommandsMode, setTrustedCommandsMode] = useState('none') // 'none' | 'common' | 'all'
     const [customTrustedCommands, setCustomTrustedCommands] = useState('') // 自定义命令列表
@@ -60,8 +57,8 @@ function Settings() {
     const [autoSwitchThreshold, setAutoSwitchThreshold] = useState(1)
     const [autoSwitchInterval, setAutoSwitchInterval] = useState(5)
 
-    // 关闭窗口行为
-    const [closeToTray, setCloseToTray] = useState(false)
+    // 开机自启
+    const [autostartEnabled, setAutostartEnabled] = useState(false)
 
     // Kiro IDE 状态
     const [, setLoading] = useState(false)
@@ -78,24 +75,24 @@ function Settings() {
         setLoading(true)
         try {
             // 先加载核心设置（快速）
-            const [kiroSettings, appSettings, sysMachine, kiroPath, ideInfo, dataDir] = await Promise.all([
+            const [kiroSettings, appSettings, sysMachine, kiroPath, ideInfo, dataDir, autostart] = await Promise.all([
                 invoke<any>('get_kiro_settings').catch(() => null),
                 invoke<any>('get_app_settings').catch(() => null),
                 invoke<any>('get_system_machine_guid').catch(() => null),
                 invoke<string | null>('get_custom_kiro_path').catch(() => null),
                 invoke<any>('check_ide_installation').catch(() => null),
-                invoke<string>('get_app_data_dir').catch(() => '')
+                invoke<string>('get_app_data_dir').catch(() => ''),
+                invoke<boolean>('get_autostart_enabled').catch(() => false)
             ])
+            if (!mountedRef.current) return
             setSystemMachineInfo(sysMachine)
             // 优先显示自定义路径，否则显示检测到的默认路径
             setCustomKiroPath(kiroPath || (ideInfo?.ide_path || null))
             setAppDataDir(dataDir)
+            setAutostartEnabled(!!autostart)
 
             // 从 Kiro IDE 设置读取
             if (kiroSettings) {
-                const proxy = kiroSettings.httpProxy || ''
-                setHttpProxy(proxy)
-                setOriginalProxy(proxy)
                 setAiModel(kiroSettings.modelSelection || 'claude-sonnet-4.5')
                 setEnableCodebaseIndexing(kiroSettings.enableCodebaseIndexing ?? true)
                 setTrustedCommandsMode(kiroSettings.trustedCommandsMode || 'none')
@@ -124,8 +121,6 @@ function Settings() {
                 setAutoSwitchEnabled(appSettings.autoSwitchEnabled ?? false)
                 setAutoSwitchThreshold(appSettings.autoSwitchThreshold ?? 1)
                 setAutoSwitchInterval(appSettings.autoSwitchInterval ?? 5)
-                // 关闭窗口行为
-                setCloseToTray(appSettings.closeToTray ?? false)
                 // CLI 启动配置
                 setCliLaunchModel(appSettings.cliLaunchModel ?? 'claude-sonnet-4.5')
                 setCliLaunchTrustAllTools(appSettings.cliLaunchTrustAllTools ?? false)
@@ -133,12 +128,19 @@ function Settings() {
         } catch (err) {
             console.error('Failed to load settings:', err)
         } finally {
-            setLoading(false)
+            if (mountedRef.current) {
+                setLoading(false)
+            }
         }
     }, [])
 
     useEffect(() => {
+        mountedRef.current = true
         loadSettings()
+
+        return () => {
+            mountedRef.current = false
+        }
     }, [loadSettings])
 
     const saveAppSettings = (updates: any, notifyChange = false) => persistAppSettings({
@@ -159,75 +161,97 @@ function Settings() {
         showError,
         t})
 
-    const handleApplyProxy = async () => {
-        if (!isValidProxy(httpProxy)) {
-            await showError(t('settings.saveFailed'), t('settings.invalidProxyFormat'))
-            return
-        }
-
-        setSavingProxy(true)
-        try {
-            await invoke('set_kiro_proxy', { proxy: httpProxy })
-            setOriginalProxy(httpProxy)
-            await showSuccess(t('settings.saveSuccess'), httpProxy ? t('settings.proxyApplied') : t('settings.proxyCleared'))
-        } catch (err: any) {
-            await showError(t('settings.saveFailed'), t('settings.saveFailed') + ': ' + err)
-        } finally {
-            setSavingProxy(false)
-        }
-    }
-
     const handleApplyModel = async (model: string) => {
+        const previous = aiModel
         setAiModel(model)
         setSavingModel(true)
         try {
             await invoke('set_kiro_model', { model })
+            if (!mountedRef.current) return
             if (lockModel) {
                 await saveAppSettings({ lockedModel: model })
             }
         } catch (err: any) {
+            if (mountedRef.current) {
+                setAiModel(previous)
+            }
             await showError(t('settings.saveFailed'), t('settings.saveFailed') + ': ' + err)
         } finally {
-            setSavingModel(false)
+            if (mountedRef.current) {
+                setSavingModel(false)
+            }
         }
     }
 
     const handleLockModelChange = async (checked: boolean) => {
+        const previous = lockModel
         setLockModel(checked)
-        await saveAppSettings({ lockModel: checked, lockedModel: checked ? aiModel : null })
+        const saved = await saveAppSettings({ lockModel: checked, lockedModel: checked ? aiModel : null })
+        if (!saved && mountedRef.current) {
+            setLockModel(previous)
+        }
     }
 
     const handleAutoRefreshChange = makeAppBoolToggle(setAutoRefresh, 'autoRefresh', saveAppSettings, true)
 
     const handleAutoRefreshIntervalChange = async (value: string) => {
+        const previous = autoRefreshInterval
         const interval = parseInt(value) || 50
         setAutoRefreshInterval(interval)
-        await saveAppSettings({ autoRefreshInterval: interval }, true)
+        const saved = await saveAppSettings({ autoRefreshInterval: interval }, true)
+        if (!saved && mountedRef.current) {
+            setAutoRefreshInterval(previous)
+        }
     }
 
     const handleAutoChangeMachineIdChange = makeAppBoolToggle(setAutoChangeMachineId, 'autoChangeMachineId', saveAppSettings)
 
     const handleMachineIdModeChange = async (mode: 'bind' | 'random') => {
+        const previous = machineIdMode
         setMachineIdMode(mode)
-        await saveAppSettings({ bindMachineIdToAccount: mode === 'bind' })
+        const saved = await saveAppSettings({ bindMachineIdToAccount: mode === 'bind' })
+        if (!saved && mountedRef.current) {
+            setMachineIdMode(previous)
+        }
     }
 
     const handleAutoSwitchEnabledChange = makeAppBoolToggle(setAutoSwitchEnabled, 'autoSwitchEnabled', saveAppSettings, true)
 
     const handleAutoSwitchThresholdChange = async (value: any) => {
+        const previous = autoSwitchThreshold
         const parsedValue = typeof value === 'number' ? value : parseFloat(value)
         const threshold = Number.isFinite(parsedValue) ? parsedValue : 1
         setAutoSwitchThreshold(threshold)
-        await saveAppSettings({ autoSwitchThreshold: threshold }, true)
+        const saved = await saveAppSettings({ autoSwitchThreshold: threshold }, true)
+        if (!saved && mountedRef.current) {
+            setAutoSwitchThreshold(previous)
+        }
     }
 
     const handleAutoSwitchIntervalChange = async (value: string) => {
+        const previous = autoSwitchInterval
         const interval = parseInt(value) || 5
         setAutoSwitchInterval(interval)
-        await saveAppSettings({ autoSwitchInterval: interval }, true)
+        const saved = await saveAppSettings({ autoSwitchInterval: interval }, true)
+        if (!saved && mountedRef.current) {
+            setAutoSwitchInterval(previous)
+        }
     }
 
-    const handleCloseToTrayChange = makeAppBoolToggle(setCloseToTray, 'closeToTray', saveAppSettings)
+    const handleAutostartChange = async (checked: boolean) => {
+        setAutostartEnabled(checked)
+        try {
+            const enabled = await invoke<boolean>('set_autostart_enabled', { enabled: checked })
+            if (mountedRef.current) {
+                setAutostartEnabled(enabled)
+            }
+        } catch (err: any) {
+            if (mountedRef.current) {
+                setAutostartEnabled(!checked)
+            }
+            await showError(t('settings.saveFailed'), String(err))
+        }
+    }
 
     const handleBrowseKiroPath = async () => {
         try {
@@ -243,21 +267,23 @@ function Settings() {
 
             if (selected) {
                 await invoke('set_custom_kiro_path', { path: selected })
+                if (!mountedRef.current) return
                 setCustomKiroPath(selected)
-                showSuccess(t('settings.kiroPathSaved'))
+                await showSuccess(t('settings.kiroPathSaved'))
             }
         } catch (error) {
-            showError(String(error))
+            await showError(String(error))
         }
     }
 
     const handleClearKiroPath = async () => {
         try {
             await invoke('clear_custom_kiro_path')
+            if (!mountedRef.current) return
             setCustomKiroPath(null)
-            showSuccess(t('settings.kiroPathCleared'))
+            await showSuccess(t('settings.kiroPathCleared'))
         } catch (error) {
-            showError(String(error))
+            await showError(String(error))
         }
     }
 
@@ -273,28 +299,40 @@ function Settings() {
             )
             if (!confirmed) return
         }
+        const previous = trustedCommandsMode
         setTrustedCommandsMode(mode)
         try {
             await invoke('set_kiro_trusted_commands', { mode, customCommands: customTrustedCommands })
         } catch (err: any) {
+            if (mountedRef.current) {
+                setTrustedCommandsMode(previous)
+            }
             await showError(t('settings.saveFailed'), t('settings.saveFailed') + ': ' + err)
         }
     }
 
     const handleCustomTrustedCommandsChange = async (commands: string) => {
+        const previous = customTrustedCommands
         setCustomTrustedCommands(commands)
         if (trustedCommandsMode === 'common') {
             try {
                 await invoke('set_kiro_trusted_commands', { mode: 'common', customCommands: commands })
             } catch (err: any) {
+                if (mountedRef.current) {
+                    setCustomTrustedCommands(previous)
+                }
                 await showError(t('settings.saveFailed'), t('settings.saveFailed') + ': ' + err)
             }
         }
     }
 
     const handleAgentAutonomyChange = async (mode: string) => {
+        const previous = agentAutonomy
         setAgentAutonomy(mode)
-        await runKiroCommand('set_kiro_agent_autonomy', { autonomy: mode })
+        const saved = await runKiroCommand('set_kiro_agent_autonomy', { autonomy: mode })
+        if (!saved && mountedRef.current) {
+            setAgentAutonomy(previous)
+        }
     }
 
     const handleTabAutocompleteChange = makeKiroBoolToggle(setEnableTabAutocomplete, runKiroCommand, 'set_kiro_tab_autocomplete', 'enableTabAutocomplete')
@@ -304,16 +342,24 @@ function Settings() {
     const handleDebugLogsChange = makeKiroBoolToggle(setEnableDebugLogs, runKiroCommand, 'set_kiro_debug_logs', 'enableDebugLogs')
 
     const handleTrustedToolsSave = async (value: string) => {
+        const previous = trustedTools
         setTrustedTools(value)
         const tools = value.split(',').map(s => s.trim()).filter(Boolean)
-        await runKiroCommand('set_kiro_trusted_tools', { tools }, { trustedTools: tools })
+        const saved = await runKiroCommand('set_kiro_trusted_tools', { tools }, { trustedTools: tools })
+        if (!saved && mountedRef.current) {
+            setTrustedTools(previous)
+        }
     }
 
     const handleReferenceTrackerChange = makeKiroBoolToggle(setReferenceTracker, runKiroCommand, 'set_kiro_reference_tracker', 'referenceTracker')
 
     const handleConfigureMcpChange = async (mode: string) => {
+        const previous = configureMcp
         setConfigureMcp(mode)
-        await runKiroCommand('set_kiro_configure_mcp', { mode }, { configureMcp: mode })
+        const saved = await runKiroCommand('set_kiro_configure_mcp', { mode }, { configureMcp: mode })
+        if (!saved && mountedRef.current) {
+            setConfigureMcp(previous)
+        }
     }
 
     const handleApplyBrowser = async () => {
@@ -324,40 +370,27 @@ function Settings() {
 
         setSavingBrowser(true)
         try {
-            await saveAppSettings({ browserPath: browserPath })
+            const saved = await saveAppSettings({ browserPath: browserPath })
+            if (!saved || !mountedRef.current) return
             setOriginalBrowserPath(browserPath)
             await showSuccess(t('settings.saveSuccess'), browserPath ? t('settings.browserSaved') : t('settings.defaultBrowser'))
         } catch (err: any) {
             await showError(t('settings.saveFailed'), err.toString())
         } finally {
-            setSavingBrowser(false)
+            if (mountedRef.current) {
+                setSavingBrowser(false)
+            }
         }
     }
 
     const handleDetectBrowsers = async () => {
         try {
             const browsers = await invoke<any[]>('detect_installed_browsers')
+            if (!mountedRef.current) return
             setDetectedBrowsers(browsers)
             setShowBrowserList(true)
         } catch (err: any) {
             await showError(t('settings.detectFailed'), err.toString())
-        }
-    }
-
-    const handleDetectProxy = async () => {
-        setDetectingProxy(true)
-        try {
-            const proxyInfo = await invoke<any>('detect_system_proxy')
-            if (proxyInfo.enabled && proxyInfo.httpProxy) {
-                setHttpProxy(proxyInfo.httpProxy)
-                await showSuccess(t('settings.detectSuccess'), `${t('settings.systemProxyDetected')}: ${proxyInfo.httpProxy}`)
-            } else {
-                await showError(t('settings.noProxyDetected'), t('settings.noProxyConfigured'))
-            }
-        } catch (err: any) {
-            await showError(t('settings.detectFailed'), err.toString())
-        } finally {
-            setDetectingProxy(false)
         }
     }
 
@@ -372,11 +405,15 @@ function Settings() {
         setMachineGuidAction('reset')
         try {
             const newGuid = await invoke<string>('reset_system_machine_guid')
+            if (!mountedRef.current) return
             setSystemMachineInfo((prev: any) => ({ ...prev, machineGuid: newGuid }))
+            setMachineGuidAction(null)
             await showSuccess(t('settings.resetSuccess'), `${t('settings.newMachineGuid')}: ${newGuid}`)
         } catch (err: any) {
             await showError(t('settings.resetFailed'), err.toString())
-            setMachineGuidAction(null)
+            if (mountedRef.current) {
+                setMachineGuidAction(null)
+            }
         }
     }
 
@@ -433,7 +470,7 @@ function Settings() {
                             autoSwitchEnabled={autoSwitchEnabled}
                             autoSwitchThreshold={autoSwitchThreshold}
                             autoSwitchInterval={autoSwitchInterval}
-                            closeToTray={closeToTray}
+                            autostartEnabled={autostartEnabled}
                             browserPath={browserPath}
                             setBrowserPath={setBrowserPath}
                             originalBrowserPath={originalBrowserPath}
@@ -456,7 +493,7 @@ function Settings() {
                             handleAutoSwitchEnabledChange={handleAutoSwitchEnabledChange}
                             handleAutoSwitchThresholdChange={handleAutoSwitchThresholdChange}
                             handleAutoSwitchIntervalChange={handleAutoSwitchIntervalChange}
-                            handleCloseToTrayChange={handleCloseToTrayChange}
+                            handleAutostartChange={handleAutostartChange}
                             appDataDir={appDataDir}
                             handleOpenAppDataDir={handleOpenAppDataDir}
                             t={t}

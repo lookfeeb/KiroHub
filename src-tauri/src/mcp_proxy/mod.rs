@@ -1,5 +1,5 @@
 // 本地 MCP 反向代理
-// mcp.json 的 url 无法携带认证头，故让其指向 127.0.0.1:<port>/<secret>/<serverKey>，
+// mcp.json 的 url 无法携带认证头，故让其指向 127.0.0.1:<port>/<secret>/<credentialKey>/<serverName>，
 // 本服务注入自动刷新的 Authorization: Bearer 后转发到真实上游 MCP 地址，并流式回传。
 //
 // 安全：仅绑定 127.0.0.1；路径中的 <secret> 做本地校验，防止本机其他进程盗用 token。
@@ -14,7 +14,8 @@ use axum::{
 };
 
 use crate::commands::app_settings_cmd::{
-    get_mcp_oauth_store, get_or_init_proxy_runtime, upsert_mcp_oauth_cred, McpOAuthCred,
+    decode_credential_key, get_mcp_oauth_store, get_or_init_proxy_runtime, upsert_mcp_oauth_cred,
+    McpOAuthCred,
 };
 use crate::mcp_oauth::refresh_access_token;
 
@@ -33,8 +34,8 @@ pub async fn start_proxy() -> Result<u16, String> {
     };
 
     let app = Router::new()
-        .route("/{secret}/{server_key}", any(handle))
-        .route("/{secret}/{server_key}/{*rest}", any(handle))
+        .route("/{secret}/{credential_key}/{server_name}", any(handle))
+        .route("/{secret}/{credential_key}/{server_name}/{*rest}", any(handle))
         .with_state(state);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -57,10 +58,14 @@ async fn handle(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    // params 顺序与路由占位一致：secret, server_key, [rest]
+    // params 顺序与路由占位一致：secret, credential_key, server_name, [rest]
     let secret = params.first().map(|(_, v)| v.clone()).unwrap_or_default();
-    let server_key = params.get(1).map(|(_, v)| v.clone()).unwrap_or_default();
-    let rest = params.get(2).map(|(_, v)| v.clone());
+    let credential_key = params
+        .get(1)
+        .map(|(_, v)| decode_credential_key(v))
+        .unwrap_or_default();
+    let server_name = params.get(2).map(|(_, v)| v.clone()).unwrap_or_default();
+    let rest = params.get(3).map(|(_, v)| v.clone());
 
     if secret != st.secret {
         return text_resp(StatusCode::FORBIDDEN, "invalid proxy secret");
@@ -69,8 +74,8 @@ async fn handle(
     let Ok(store) = get_mcp_oauth_store() else {
         return text_resp(StatusCode::INTERNAL_SERVER_ERROR, "read store failed");
     };
-    let Some(cred) = store.creds.get(&server_key).cloned() else {
-        return text_resp(StatusCode::NOT_FOUND, "unknown server key");
+    let Some(cred) = store.creds_by_key.get(&credential_key).cloned() else {
+        return text_resp(StatusCode::NOT_FOUND, "unknown credential key");
     };
 
     // 拼接上游 URL：mcp_endpoint + 子路径
@@ -91,7 +96,7 @@ async fn handle(
     // 上游 401：尝试刷新一次后重试
     if let Ok(r) = &resp {
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
-            if let Some(new_token) = try_refresh(&server_key, &cred).await {
+            if let Some(new_token) = try_refresh(&credential_key, &server_name, &cred).await {
                 access_token = new_token;
                 resp = forward(&st.client, &method, &target, &headers, &body_bytes, &access_token)
                     .await;
@@ -131,7 +136,7 @@ async fn forward(
 }
 
 /// 刷新 token 并持久化（处理 refresh_token 轮换），返回新 access_token
-async fn try_refresh(server_key: &str, cred: &McpOAuthCred) -> Option<String> {
+async fn try_refresh(credential_key: &str, server_name: &str, cred: &McpOAuthCred) -> Option<String> {
     let refresh = cred.refresh_token.clone()?;
     match refresh_access_token(&cred.token_endpoint, &cred.client_id, &refresh, &cred.resource).await
     {
@@ -142,13 +147,13 @@ async fn try_refresh(server_key: &str, cred: &McpOAuthCred) -> Option<String> {
                 expires_at,
                 ..cred.clone()
             };
-            if let Err(e) = upsert_mcp_oauth_cred(server_key, updated) {
+            if let Err(e) = upsert_mcp_oauth_cred(credential_key, updated) {
                 log::error!("保存刷新后的 MCP 凭证失败: {e}");
             }
             Some(access)
         }
         Err(e) => {
-            log::error!("MCP token 刷新失败 ({server_key}): {e}");
+            log::error!("MCP token 刷新失败 ({credential_key}/{server_name}): {e}");
             None
         }
     }

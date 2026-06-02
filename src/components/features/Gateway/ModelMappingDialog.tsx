@@ -1,10 +1,10 @@
 import { Plus, Trash2, Zap } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Button } from '@/components/ui/actions/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/overlays/dialog'
+import { Input } from '@/components/ui/forms/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/forms/select'
+import { Switch } from '@/components/ui/forms/switch'
 
 // Kiro 内部模型格式（点号分隔）— 用于目标模型下拉
 const TARGET_MODELS = [

@@ -4,9 +4,9 @@ import { listen, emit, UnlistenFn } from '@tauri-apps/api/event'
 import { Loader } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import { Button } from '../../shared/button'
-import { Input } from '../../ui/input'
-import { Label } from '../../ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog'
+import { Input } from '@/components/ui/forms/input'
+import { Label } from '@/components/ui/forms/label'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/overlays/dialog'
 
 const DEFAULT_PROVIDER_ORDER = ['Google', 'Github', 'BuilderId', 'Enterprise']
 
@@ -79,19 +79,28 @@ function Login({ onLogin }: LoginProps) {
 
   useEffect(() => {
     let unlistenSuccess: UnlistenFn | undefined
+    let mounted = true
 
     const setupListener = async () => {
-      unlistenSuccess = await listen('login-success', () => {
+      listen('login-success', () => {
+        if (!mounted) return
         setLoginPending(false)
         setLoadingProvider(null)
         setShowWaitingModal(false)
         onLogin?.()
+      }).then(fn => {
+        if (mounted) {
+          unlistenSuccess = fn
+        } else {
+          fn()
+        }
       })
     }
 
     setupListener()
 
     return () => {
+      mounted = false
       if (unlistenSuccess) unlistenSuccess()
     }
   }, [onLogin])

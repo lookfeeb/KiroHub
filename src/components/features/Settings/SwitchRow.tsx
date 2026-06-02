@@ -1,5 +1,5 @@
 import type React from 'react'
-import { Switch } from '../../ui/switch'
+import { Switch } from '@/components/ui/forms/switch'
 
 interface SwitchRowProps {
   checked: boolean

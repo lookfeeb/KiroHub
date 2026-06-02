@@ -66,13 +66,20 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   const [localToken, setLocalToken] = useState<any>(null)
   // 当前 CLI 登录账号的 id
   const [cliToken, setCliToken] = useState<string | null>(null)
+  const mountedRef = useRef(true)
 
   // 读取 CLI 当前账号标识
   const loadCliToken = useCallback(async () => {
     try {
       const id = await invoke<string | null>('get_current_cli_account_id')
-      setCliToken(id || null)
-    } catch { setCliToken(null) }
+      if (mountedRef.current) {
+        setCliToken(id || null)
+      }
+    } catch {
+      if (mountedRef.current) {
+        setCliToken(null)
+      }
+    }
   }, [])
 
   // 用于管理复制提示的timer
@@ -96,7 +103,14 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   }, [localToken, cliToken, handleSwitchAccount])
   
   useEffect(() => {
-    invoke<any>('get_kiro_local_token').then(setLocalToken).catch(() => setLocalToken(null))
+    mountedRef.current = true
+    invoke<any>('get_kiro_local_token')
+      .then(token => {
+        if (mountedRef.current) setLocalToken(token)
+      })
+      .catch(() => {
+        if (mountedRef.current) setLocalToken(null)
+      })
     loadCliToken()
   }, [loadCliToken])
 
@@ -104,16 +118,26 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   const loadTagDefinitions = useCallback(() => {
     getTags()
       .then(tags => {
-        setTagDefinitions(tags as any[])
+        if (mountedRef.current) {
+          setTagDefinitions(tags as any[])
+        }
       })
       .catch(() => {
-        // 静默处理
+        console.error('加载标签定义失败')
       })
   }, [])
 
   // 加载分组定义
   const loadGroupDefinitions = useCallback(() => {
-    getGroups().then(setGroupDefinitions).catch(() => {})
+    getGroups()
+      .then(groups => {
+        if (mountedRef.current) {
+          setGroupDefinitions(groups)
+        }
+      })
+      .catch((err) => {
+        console.error('加载分组定义失败:', err)
+      })
   }, [])
 
   useEffect(() => {
@@ -124,6 +148,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   // 清理timer
   useEffect(() => {
     return () => {
+      mountedRef.current = false
       if (copiedTimerRef.current) {
         clearTimeout(copiedTimerRef.current)
       }
@@ -189,6 +214,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
 
     try {
       const response = await invoke<any>('list_available_models', { id, forceRefresh })
+      if (!mountedRef.current) return response
       const models = Array.isArray(response?.availableModels) ? response.availableModels : []
       setAvailableModelsById(prev => ({ ...prev, [id]: models }))
       setAccounts(prev => prev.map(account => (
@@ -204,10 +230,14 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
       return response
     } catch (e) {
       const message = String(e)
-      setAvailableModelsErrorById(prev => ({ ...prev, [id]: message }))
+      if (mountedRef.current) {
+        setAvailableModelsErrorById(prev => ({ ...prev, [id]: message }))
+      }
       throw e
     } finally {
-      setAvailableModelsLoadingById(prev => ({ ...prev, [id]: false }))
+      if (mountedRef.current) {
+        setAvailableModelsLoadingById(prev => ({ ...prev, [id]: false }))
+      }
     }
   }, [setAccounts])
 
@@ -240,6 +270,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     setRefreshingTokenId(id)
     try {
       const account = await invoke<any>('refresh_account_token', { id })
+      if (!mountedRef.current) return { success: true, account }
       patchAccountLocally(account)
       clearAvailableModelsState(id)
       showSuccess('Token 刷新成功')
@@ -260,7 +291,9 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
       }
       return { success: false, error: errorMsg }
     } finally {
-      setRefreshingTokenId(null)
+      if (mountedRef.current) {
+        setRefreshingTokenId(null)
+      }
     }
   }, [clearAvailableModelsState, patchAccountLocally])
 
@@ -272,12 +305,24 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
         handleRefreshStatus(id),
         invoke<any>('refresh_account_token', { id }),
       ])
-      // 仅合并 token 相关字段，保留 sync_account 刚拉取的最新 usageData/status，
-      // 避免 refresh_account_token 的旧快照覆盖刚刷新的配额数据
+      if (!mountedRef.current) return
+
+      const quotaAccount = quotaRes.status === 'fulfilled' && (quotaRes.value as any)?.success
+        ? (quotaRes.value as any).data
+        : null
+      if (quotaAccount?.id) {
+        patchAccountLocally(quotaAccount)
+      }
+
       if (tokenRes.status === 'fulfilled' && tokenRes.value?.id) {
         const tok = normalizeAccountForUi(tokenRes.value)
         setAccounts(prev => prev.map(a => a.id === tok.id
-          ? { ...tok, usageData: a.usageData ?? tok.usageData, status: a.status }
+          ? {
+              ...tok,
+              usageData: quotaAccount?.usageData ?? a.usageData ?? tok.usageData,
+              status: quotaAccount?.status ?? a.status,
+              enabled: quotaAccount?.enabled ?? a.enabled,
+            }
           : a))
       }
       clearAvailableModelsState(id)
@@ -296,9 +341,11 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
       else if (errMsg.includes('401') || errMsg.includes('invalid')) showError(t('accounts.tokenInvalid'))
       else if (errMsg) showError(errMsg.slice(0, 100))
     } finally {
-      setRefreshingTokenId(null)
+      if (mountedRef.current) {
+        setRefreshingTokenId(null)
+      }
     }
-  }, [handleRefreshStatus, patchAccountLocally, clearAvailableModelsState, t])
+  }, [handleRefreshStatus, patchAccountLocally, clearAvailableModelsState, setAccounts, t])
 
   // 获取所有标签（从标签定义中获取）
   const allTags = useMemo(() => {
@@ -455,11 +502,16 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
   }, [])
   const handleCopy = useCallback((text: string, id: string) => { 
     navigator.clipboard.writeText(text).catch(e => console.error('Copy failed:', e))
+    if (!mountedRef.current) return
     setCopiedId(id)
     if (copiedTimerRef.current) {
       clearTimeout(copiedTimerRef.current)
     }
-    copiedTimerRef.current = setTimeout(() => setCopiedId(null), 1500)
+    copiedTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setCopiedId(null)
+      }
+    }, 1500)
   }, [])
   
   // 切换账号启用/禁用
@@ -469,8 +521,10 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
 
     try {
       const updated = await invoke<any>('update_account', { params: { id: account.id, enabled } })
+      if (!mountedRef.current) return
       patchAccountLocally(updated)
     } catch (e) {
+      if (!mountedRef.current) return
       // 失败时回滚
       patchAccountLocally({ ...account, enabled: !enabled })
       console.error('Toggle enabled failed:', e)
@@ -498,10 +552,12 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
       await invoke('set_overage_status', { id: account.id, enabled })
       // API 成功后，再次同步确保数据一致
       const result = await invoke<any>('sync_account', { id: account.id })
+      if (!mountedRef.current) return
       if (result?.account) {
         patchAccountLocally(result.account)
       }
     } catch (e) {
+      if (!mountedRef.current) return
       // 失败时回滚状态
       patchAccountLocally({
         ...account,
@@ -516,7 +572,9 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
       console.error('Failed to toggle overage:', e)
       showError('超额开关切换失败', String(e))
     } finally {
-      setTogglingOverageId(null)
+      if (mountedRef.current) {
+        setTogglingOverageId(null)
+      }
     }
   }, [patchAccountLocally])
 
@@ -538,6 +596,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     }
     
     await invoke('delete_account', { id })
+    if (!mountedRef.current) return
     removeAccountsLocally([id])
   }, [accounts, localToken, removeAccountsLocally, showConfirm, t])
 
@@ -550,6 +609,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     if (confirmed) {
       try {
         await invoke('delete_account_remote', { id: account.id, deleteLocal: true })
+        if (!mountedRef.current) return
         removeAccountsLocally([account.id])
       } catch (e) {
         // 错误已通过 showError 显示
@@ -577,6 +637,7 @@ function AccountManager({ onNavigate }: AccountManagerProps) {
     }
 
     await invoke('delete_accounts', { ids: selectedIds })
+    if (!mountedRef.current) return
     removeAccountsLocally(selectedIds)
     setSelectedIds([]) // 清除选中状态
   }, [accounts, selectedIds, localToken, removeAccountsLocally, showConfirm, t])

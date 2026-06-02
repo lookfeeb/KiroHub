@@ -1,7 +1,9 @@
 // 远程 MCP OAuth 令牌后台自动刷新任务
 // 每 60s 扫描凭证，对 10 分钟内过期者用 refresh_token 续期，处理 refresh_token 轮换并持久化
 
-use crate::commands::app_settings_cmd::{get_mcp_oauth_store, upsert_mcp_oauth_cred};
+use crate::commands::app_settings_cmd::{
+    get_mcp_oauth_store, set_mcp_oauth_refresh_failure, upsert_mcp_oauth_cred,
+};
 use crate::mcp_oauth::refresh_access_token;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{interval, Duration};
@@ -24,7 +26,7 @@ async fn refresh_due(app_handle: &AppHandle) -> Result<(), String> {
     let now = now_secs();
     let mut changed = false;
 
-    for (key, cred) in &store.creds {
+    for (key, cred) in &store.creds_by_key {
         if cred.expires_at == 0 || cred.expires_at - now >= REFRESH_THRESHOLD_SECONDS {
             continue;
         }
@@ -51,7 +53,11 @@ async fn refresh_due(app_handle: &AppHandle) -> Result<(), String> {
                 changed = true;
                 log::info!("MCP token refreshed: {key}");
             }
-            Err(e) => log::error!("MCP token refresh failed [{key}]: {e}"),
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = set_mcp_oauth_refresh_failure(key, msg.clone());
+                log::error!("MCP token refresh failed [{key}]: {msg}");
+            }
         }
     }
 

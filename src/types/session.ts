@@ -17,7 +17,12 @@ export interface SessionSummary {
   fileSize: number
   createdAt?: number
   modifiedAt?: number
-  source?: 'ide' | 'cli' | 'codex' | 'claude' | 'antigravity'
+  source?: 'ide' | 'cli' | 'codex' | 'claude' | 'antigravity' | 'antigravity-ide'
+}
+
+export interface SessionTree {
+  workspaces: string[]
+  sessionsByWorkspace: Record<string, SessionSummary[]>
 }
 
 export interface HistoryItem {
@@ -28,7 +33,7 @@ export interface HistoryItem {
 }
 
 export interface Message {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system' | 'artifact'
   content: ContentItem[]
   id: string
 }

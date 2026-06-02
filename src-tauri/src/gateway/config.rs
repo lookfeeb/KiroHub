@@ -202,19 +202,26 @@ pub fn load_gateway_config() -> Result<GatewayConfig, String> {
         return Ok(normalize_config(&cfg));
     }
     // 首次：迁移旧 gateway-config.json（若有）
-    if let Some(cfg) = migrate_legacy_gateway_config() {
-        let _ = save_gateway_config(&cfg);
+    if let Some(cfg) = migrate_legacy_gateway_config()? {
+        save_gateway_config(&cfg)?;
         return Ok(normalize_config(&cfg));
     }
     Ok(GatewayConfig::default())
 }
 
-pub(crate) fn migrate_legacy_gateway_config() -> Option<GatewayConfig> {
-    let path = config_path().ok()?;
-    let content = fs::read_to_string(&path).ok()?;
-    let cfg = serde_json::from_str::<GatewayConfig>(&content).ok()?;
-    let _ = fs::rename(&path, path.with_extension("json.bak"));
-    Some(cfg)
+pub(crate) fn migrate_legacy_gateway_config() -> Result<Option<GatewayConfig>, String> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("读取旧网关配置失败 ({}): {e}", path.display()))?;
+    let cfg = serde_json::from_str::<GatewayConfig>(&content)
+        .map_err(|e| format!("解析旧网关配置失败 ({}): {e}", path.display()))?;
+    fs::rename(&path, path.with_extension("json.bak"))
+        .map_err(|e| format!("备份旧网关配置失败 ({}): {e}", path.display()))?;
+    Ok(Some(cfg))
 }
 
 pub fn get_gateway_config() -> Result<GatewayConfig, String> {

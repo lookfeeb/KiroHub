@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Plus, Dice6, Copy, Trash2, Pencil, Check } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/actions/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/overlays/dialog'
+import { Input } from '@/components/ui/forms/input'
+import { Switch } from '@/components/ui/forms/switch'
 
 interface ApiKeysDialogProps {
   open: boolean

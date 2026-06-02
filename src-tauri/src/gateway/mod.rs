@@ -480,7 +480,7 @@ pub async fn get_gateway_status(
             runtime_config: Some(config),
         })
     } else {
-        let cfg = load_gateway_config().unwrap_or_default();
+        let cfg = load_gateway_config()?;
         Ok(GatewayStatus::stopped(&cfg))
     }
 }

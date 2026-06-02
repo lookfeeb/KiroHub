@@ -2,7 +2,7 @@ use super::*;
 
 /// 从 DB 全量统计（口径与 get_gateway_request_stats_from_path 一致）。
 pub(crate) fn get_gateway_request_stats_from_db() -> Result<GatewayRequestStats, String> {
-    let conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = crate::db::connection()?;
     let mut stmt = conn
         .prepare("SELECT data FROM gateway_request_log")
         .map_err(|e| format!("查询请求日志失败: {e}"))?;

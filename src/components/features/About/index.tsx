@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Code2, Palette, Cpu, RefreshCw } from 'lucide-react'
 import { getVersion } from '@tauri-apps/api/app'
+import { invoke } from '@tauri-apps/api/core'
 import { check } from '@tauri-apps/plugin-updater'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/data-display/card'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Button } from '@/components/ui/actions/button'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
@@ -28,6 +29,7 @@ function About() {
   const [version, setVersion] = useState('')
   const [checking, setChecking] = useState(false)
   const [changelog, setChangelog] = useState<{ version: string; body: string } | null>(null)
+  const mountedRef = useRef(true)
 
   const accent = useMemo(() => getThemeAccent(theme), [theme])
 
@@ -38,33 +40,48 @@ function About() {
   ], [])
 
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => setVersion(''))
+    mountedRef.current = true
+    getVersion()
+      .then(version => { if (mountedRef.current) setVersion(version) })
+      .catch(() => { if (mountedRef.current) setVersion('') })
+
+    return () => {
+      mountedRef.current = false
+    }
   }, [])
 
   const checkUpdate = useCallback(async () => {
     setChecking(true)
     try {
       const update = await check()
+      if (!mountedRef.current) return
       if (update?.available) {
         showUpdate({ version: update.version, body: update.body || '' }, update)
       } else {
         showInfo('检查更新', '当前已是最新版本')
       }
     } catch (e) {
-      showInfo('检查更新', '检查更新失败：' + e)
+      if (mountedRef.current) {
+        showInfo('检查更新', '检查更新失败：' + e)
+      }
     } finally {
-      setChecking(false)
+      if (mountedRef.current) {
+        setChecking(false)
+      }
     }
   }, [showUpdate, showInfo])
 
   const showChangelog = useCallback(async () => {
     if (!version) return
     try {
-      const res = await fetch(`https://api.github.com/repos/lookfeeb/KiroHub/releases/tags/v${version}`)
-      const data = await res.json()
-      setChangelog({ version, body: data?.body || '暂无更新说明' })
+      const body = await invoke<string>('get_release_changelog', { version })
+      if (mountedRef.current) {
+        setChangelog({ version, body })
+      }
     } catch {
-      setChangelog({ version, body: '获取更新内容失败' })
+      if (mountedRef.current) {
+        setChangelog({ version, body: '获取更新内容失败' })
+      }
     }
   }, [version])
 

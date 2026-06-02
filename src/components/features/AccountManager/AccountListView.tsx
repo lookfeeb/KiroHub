@@ -1,9 +1,9 @@
 import { useRef, useMemo, memo, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Users, Plus, RefreshCw, Eye, Edit2, Trash2, Copy, UserX, ChevronUp, ChevronDown, Key, LogIn, LogOut } from 'lucide-react'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Checkbox } from '@/components/ui/forms/checkbox'
 import { useApp } from '../../../hooks/useApp'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
+import { usePrivacy } from '../../../contexts/usePrivacy'
 import { getQuota, getUsed, formatUsage, getAccountDisplayName } from '../../../utils/accountStats'
 import { getAccountStatusMeta, isBannedStatus, isUnavailableStatus } from '../../../utils/accountStatus'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
@@ -274,27 +274,27 @@ const ListRow = memo(function ListRow({
       {/* 操作按钮（hover 时绝对定位浮起，避免占用列宽） */}
       <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-card/95 backdrop-blur-sm rounded-md shadow-sm border border-border px-1 py-1">
         {isCurrent ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); onSwitch(account) }}
-            disabled={isSwitching}
-            className="h-7 w-7 rounded-md inline-flex items-center justify-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
-            title={t('accountCard.LogOut')}
-          >
+        <button
+          onClick={(e) => { e.stopPropagation(); onSwitch(account) }}
+          disabled={isSwitching}
+          className="h-7 w-7 rounded-md inline-flex items-center justify-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+          title={t('accountCard.LogOut')}
+        >
             <LogOut size={13} className={isSwitching ? 'animate-spin' : ''} />
           </button>
         ) : (
-          <button
-            onClick={(e) => { e.stopPropagation(); onSwitch(account) }}
-            disabled={isSwitching || isUnavailable}
-            className="h-7 w-7 rounded-md inline-flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-            title={t('accountCard.LogIn')}
-          >
+        <button
+          onClick={(e) => { e.stopPropagation(); onSwitch(account) }}
+          disabled={isSwitching || isUnavailable}
+          className="h-7 w-7 rounded-md inline-flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+          title={t('accountCard.LogIn')}
+        >
             <LogIn size={13} className={isSwitching ? 'animate-spin' : ''} />
           </button>
         )}
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(account) }}
-          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           title={t('accountCard.viewDetails')}
         >
           <Eye size={13} />
@@ -302,14 +302,14 @@ const ListRow = memo(function ListRow({
         <button
           onClick={(e) => { e.stopPropagation(); onRefresh(account.id) }}
           disabled={isRefreshing}
-          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
           title={t('accountCard.refreshQuota')}
         >
           <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(account.id) }}
-          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+          className="h-7 w-7 rounded-md inline-flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
           title={t('accountCard.delete')}
         >
           <Trash2 size={13} />
@@ -454,11 +454,11 @@ function AccountListView({
         <div className="w-36">邮箱</div>
         <div className="w-16 text-center">来源</div>
         <div className="w-16 text-center">订阅</div>
-        <button type="button" onClick={() => handleSort('usage')} className="w-24 text-left hover:text-primary transition-colors">
+        <button type="button" onClick={() => handleSort('usage')} className="w-24 text-left hover:text-primary transition-colors cursor-pointer">
           配额<SortIcon field="usage" />
         </button>
         <div className="w-12 text-center">状态</div>
-        <button type="button" onClick={() => handleSort('trial')} className="w-28 text-left hover:text-primary transition-colors">
+        <button type="button" onClick={() => handleSort('trial')} className="w-28 text-left hover:text-primary transition-colors cursor-pointer">
           过期 / 试用<SortIcon field="trial" />
         </button>
         <div className="w-16">分组</div>

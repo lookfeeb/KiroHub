@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Terminal, Check, RefreshCw, Cpu, ShieldCheck } from 'lucide-react'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/forms/select'
 import SectionCard from './SectionCard'
 import CliCommandPreview from './CliCommandPreview'
 import { useAccount } from '../../../contexts/AccountContext'
@@ -18,25 +18,47 @@ function SettingsCliLaunch({ model, trustAllTools, onChange, t }: Props) {
   const [models, setModels] = useState<{ modelId: string; modelName?: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [refreshed, setRefreshed] = useState(false)
+  const mountedRef = useRef(true)
+  const timersRef = useRef<NodeJS.Timeout[]>([])
 
-  const fetchModels = async (forceRefresh = false) => {
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(timer => clearTimeout(timer))
+    timersRef.current = []
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearTimers()
+    }
+  }, [clearTimers])
+
+  const fetchModels = useCallback(async (forceRefresh = false) => {
     if (!currentAccount?.id) return
     setLoading(true)
     const startedAt = Date.now()
     try {
       const resp = await invoke<any>('list_available_models', { id: currentAccount.id, forceRefresh })
+      if (!mountedRef.current) return
       setModels(Array.isArray(resp?.availableModels) ? resp.availableModels : [])
       if (forceRefresh) {
+        clearTimers()
         setRefreshed(true)
-        setTimeout(() => setRefreshed(false), 1600)
+        timersRef.current.push(setTimeout(() => {
+          if (mountedRef.current) setRefreshed(false)
+        }, 1600))
       }
     } catch (e) { console.error('拉取模型列表失败:', e) } finally {
+      if (!mountedRef.current) return
       const elapsed = Date.now() - startedAt
-      setTimeout(() => setLoading(false), Math.max(0, 500 - elapsed))
+      timersRef.current.push(setTimeout(() => {
+        if (mountedRef.current) setLoading(false)
+      }, Math.max(0, 500 - elapsed)))
     }
-  }
+  }, [clearTimers, currentAccount?.id])
 
-  useEffect(() => { fetchModels(false) }, [currentAccount?.id])
+  useEffect(() => { fetchModels(false) }, [fetchModels])
 
   const currentModelName = models.find((m) => m.modelId === model)?.modelName
 

@@ -1,7 +1,7 @@
 {
   "name": "kirohub",
   "private": true,
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "KiroHub - 管理 Kiro IDE 账号，支持多账号切换和配额监控",
   "author": "lookfeeb",
   "license": "CC-BY-NC-SA-4.0",
@@ -11,18 +11,24 @@
   },
   "type": "module",
   "scripts": {
+    "predev": "npm run sync:version",
     "dev": "vite",
+    "predev:tauri": "npm run sync:version",
     "dev:tauri": "tauri dev --no-dev-server",
+    "sync:version": "node scripts/sync-version.mjs",
+    "prebuild": "npm run sync:version",
     "build": "vite build",
+    "prebuild:release": "npm run sync:version",
     "typecheck": "tsc --noEmit",
     "build:release": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./build-release.ps1",
     "preview": "vite preview",
+    "pretauri": "npm run sync:version",
     "tauri": "tauri",
     "release": "standard-version",
     "release:minor": "standard-version --release-as minor",
     "release:major": "standard-version --release-as major",
     "release:patch": "standard-version --release-as patch",
-    "release:check": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/check-release-pipeline.ps1"
+    "release:check": "npm run sync:version"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

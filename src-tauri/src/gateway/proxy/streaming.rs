@@ -797,7 +797,10 @@ pub(crate) fn stream_proxy_response(
             log::info!("[流式] 响应中没有 token 信息，使用本地估算");
 
             // 估算输入 tokens（从请求消息中）
-            let request_text = serde_json::to_string(&request_messages).unwrap_or_default();
+            let request_text = serde_json::to_string(&request_messages).unwrap_or_else(|error| {
+                log::warn!("[流式] 请求消息序列化失败，token 估算退回空输入: {error}");
+                String::new()
+            });
             aggregated.input_tokens = crate::gateway::token_estimator::estimate_tokens(&request_text, &model);
 
             // 估算输出 tokens（从响应文本中）
@@ -883,7 +886,8 @@ pub(crate) fn stream_proxy_response(
                         send_event(&tx, Some("content_block_start"), &start.to_string()).await;
                         idx
                     };
-                    let parsed_input: Value = serde_json::from_str(input).unwrap_or_else(|_| json!({}));
+                    let parsed_input =
+                        crate::gateway::converter::parse_tool_arguments(input, "proxy.streaming");
                     let delta = json!({
                         "type": "content_block_delta",
                         "index": block_index,
@@ -1007,8 +1011,12 @@ pub(crate) fn stream_proxy_response(
                         total_tokens: aggregated.input_tokens + aggregated.output_tokens,
                     }),
                 );
-                let final_json = serde_json::to_string(&final_chunk).unwrap_or_default();
-                send_data(&tx, &final_json).await;
+                match serde_json::to_string(&final_chunk) {
+                    Ok(final_json) => {
+                        let _ = send_data(&tx, &final_json).await;
+                    }
+                    Err(error) => log::error!("[流式] 序列化最终 OpenAI chunk 失败: {error}"),
+                }
                 send_data(&tx, "[DONE]").await;
             }
         }

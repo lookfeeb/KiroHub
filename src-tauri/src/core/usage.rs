@@ -251,6 +251,24 @@ pub fn is_usage_capped(usage_data: Option<&Value>) -> bool {
     details.remaining() <= 0.0
 }
 
+/// 账号刷新后是否还有可用配置。
+///
+/// 用于自动修正账号 enabled：
+/// - 有基础/试用/奖励额度：可用
+/// - 已开启超额且有超额上限：可用
+/// - usage 结构缺失，或所有额度都为 0：不可用
+pub fn has_usable_quota_config(usage_data: Option<&Value>) -> bool {
+    let Some(details) = UsageDetails::from_usage_data(usage_data) else {
+        return false;
+    };
+
+    let has_normal_quota =
+        details.main_limit > 0.0 || details.trial_limit > 0.0 || details.bonus_limit > 0.0;
+    let has_enabled_overage = details.overage_cap > 0.0;
+
+    has_normal_quota || has_enabled_overage
+}
+
 /// 账号配额是否超过给定阈值（百分比，0-100）
 pub fn usage_exceeds_threshold(usage_data: Option<&Value>, threshold_pct: f64) -> bool {
     let Some(breakdown) = UsageBreakdown::from_usage_data(usage_data) else {
@@ -399,5 +417,27 @@ mod tests {
         });
         let details = UsageDetails::from_usage_data(Some(&d)).unwrap();
         assert!((details.remaining() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn usable_quota_config_accepts_normal_quota() {
+        let d = data("DISABLED", 0.0, 100.0, 0.0, "OVERAGE_INCAPABLE");
+        assert!(has_usable_quota_config(Some(&d)));
+    }
+
+    #[test]
+    fn usable_quota_config_accepts_enabled_overage_without_normal_quota() {
+        let d = data("ENABLED", 0.0, 0.0, 50.0, "OVERAGE_CAPABLE");
+        assert!(has_usable_quota_config(Some(&d)));
+    }
+
+    #[test]
+    fn usable_quota_config_rejects_empty_or_disabled_overage_only() {
+        let empty = data("DISABLED", 0.0, 0.0, 0.0, "OVERAGE_INCAPABLE");
+        assert!(!has_usable_quota_config(Some(&empty)));
+
+        let disabled_overage_only = data("DISABLED", 0.0, 0.0, 50.0, "OVERAGE_CAPABLE");
+        assert!(!has_usable_quota_config(Some(&disabled_overage_only)));
+        assert!(!has_usable_quota_config(None));
     }
 }

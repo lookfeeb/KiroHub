@@ -90,7 +90,8 @@ impl KiroPortalClient {
 
         if !status.is_success() {
             let error_msg = if let Ok(error) = cbor_decode::<serde_json::Value>(&bytes) {
-                serde_json::to_string_pretty(&error).unwrap_or_default()
+                serde_json::to_string_pretty(&error)
+                    .unwrap_or_else(|err| format!("<错误响应序列化失败: {err}>"))
             } else {
                 String::from_utf8_lossy(&bytes).to_string()
             };

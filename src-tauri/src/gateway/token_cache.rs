@@ -35,7 +35,7 @@ impl TokenCache {
     /// Create a new token cache with a capacity of 1000 entries
     pub fn new() -> Self {
         Self {
-            cache: LruCache::new(NonZeroUsize::new(1000).unwrap()),
+            cache: LruCache::new(NonZeroUsize::new(1000).unwrap_or(NonZeroUsize::MIN)),
         }
     }
 

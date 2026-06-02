@@ -84,7 +84,7 @@ pub(crate) fn request_log_sender() -> &'static tokio::sync::mpsc::UnboundedSende
 
 /// 单事务内批量插入 gateway_request_log。
 pub(crate) fn flush_request_log_batch(batch: &[GatewayRequestLogEntry]) -> Result<(), String> {
-    let mut conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let mut conn = crate::db::connection()?;
     let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
     {
         let mut stmt = tx
@@ -103,7 +103,7 @@ pub(crate) fn flush_request_log_batch(batch: &[GatewayRequestLogEntry]) -> Resul
 pub(crate) fn get_gateway_request_logs_from_db(
     limit: Option<usize>,
 ) -> Result<Vec<GatewayRequestLogEntry>, String> {
-    let conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = crate::db::connection()?;
     let max = limit.unwrap_or(100).clamp(1, 500) as i64;
     let mut stmt = conn
         .prepare("SELECT data FROM gateway_request_log ORDER BY id DESC LIMIT ?1")
@@ -122,7 +122,7 @@ pub(crate) fn get_gateway_request_logs_from_db(
 
 /// 清空 DB 中的请求日志。
 pub(crate) fn clear_gateway_request_logs_db() -> Result<(), String> {
-    let conn = crate::db::pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = crate::db::connection()?;
     conn.execute("DELETE FROM gateway_request_log", [])
         .map(|_| ())
         .map_err(|e| format!("清空请求日志失败: {e}"))

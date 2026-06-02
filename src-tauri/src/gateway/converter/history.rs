@@ -273,7 +273,7 @@ pub fn history_assistant_message_from_response_content(
                 .iter()
                 .map(|(id, name, arguments)| KiroToolUse {
                     name: name.clone(),
-                    input: serde_json::from_str(arguments).unwrap_or_else(|_| json!({})),
+                    input: parse_tool_arguments(arguments, "converter.history"),
                     tool_use_id: id.clone(),
                 })
                 .collect(),

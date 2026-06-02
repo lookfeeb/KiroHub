@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle, XCircle, Info, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import {
@@ -42,6 +42,15 @@ function ConfirmModal({
   const { t, theme } = useApp()
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) {
+        clearTimeout(copiedTimerRef.current)
+      }
+    }
+  }, [])
   
   const accent = useMemo(() => getThemeAccent(theme), [theme])
   const colors = useMemo(() => ({
@@ -112,8 +121,14 @@ function ConfirmModal({
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(JSON.stringify(rawData, null, 2))
+                      if (copiedTimerRef.current) {
+                        clearTimeout(copiedTimerRef.current)
+                      }
                       setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
+                      copiedTimerRef.current = setTimeout(() => {
+                        setCopied(false)
+                        copiedTimerRef.current = null
+                      }, 2000)
                     }}
                     className={`absolute top-2 right-2 p-1.5 rounded hover:bg-muted/50 transition-colors cursor-pointer`}
                     title="复制"

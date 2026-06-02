@@ -74,7 +74,17 @@ pub(crate) async fn send_generate_request<T: serde::Serialize + ?Sized>(
             return Ok(upstream_resp);
         }
 
-        let body = upstream_resp.text().await.unwrap_or_default();
+        let body = match upstream_resp.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    "api_error",
+                    sanitize_error(&format!("读取上游错误响应失败: {error}")),
+                    None,
+                ));
+            }
+        };
 
         // 429 限流错误不重试，直接返回
         if status == StatusCode::TOO_MANY_REQUESTS {
@@ -485,4 +495,3 @@ pub(crate) fn persist_account_refresh(
 pub(crate) fn usage_exceeds_threshold(usage_data: &Value, threshold: i32) -> bool {
     crate::core::usage::usage_exceeds_threshold(Some(usage_data), f64::from(threshold))
 }
-

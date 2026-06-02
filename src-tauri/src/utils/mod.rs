@@ -2,3 +2,4 @@
 
 pub mod browser;
 pub mod cmd_output;
+pub mod fs;

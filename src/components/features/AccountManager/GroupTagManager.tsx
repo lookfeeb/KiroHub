@@ -26,10 +26,32 @@ export function TagSelector({ selectedTagIds, onChange, allTags = null }) {
   const [tags, setTags] = useState(allTags || [])
   const [showDropdown, setShowDropdown] = useState(false)
   const containerRef = useRef(null)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
     if (!allTags) {
-      getTags().then(setTags).catch(() => { })
+      getTags()
+        .then((tagData) => {
+          if (!cancelled && mountedRef.current) {
+            setTags(tagData)
+          }
+        })
+        .catch((err) => {
+          console.error('加载标签选择器数据失败:', err)
+        })
+    }
+
+    return () => {
+      cancelled = true
     }
   }, [allTags])
 
@@ -66,6 +88,7 @@ export function TagSelector({ selectedTagIds, onChange, allTags = null }) {
       const color = PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)]
       try {
         const newTag = await invoke('add_tag', { name: trimmed, color }) as { id: string; name: string; color: string }
+        if (!mountedRef.current) return
         setTags([...actualTags, newTag])
         onChange([...selectedTagIds, newTag.id])
       } catch (e) {
@@ -182,20 +205,29 @@ function GroupTagManager({ onClose, onSuccess, defaultTab = 'tags' }) {
 
   // 加载数据
   useEffect(() => {
-    loadData()
-  }, [])
+    let mounted = true
 
-  const loadData = async () => {
-    try {
-      const [tagsData, groupsData] = await Promise.all([getTags(), getGroups()]) as [any[], any[]]
-      setTags(tagsData)
-      setGroups(groupsData)
-    } catch (e) {
-      console.error('加载数据失败:', e)
-    } finally {
-      setLoading(false)
+    const loadData = async () => {
+      try {
+        const [tagsData, groupsData] = await Promise.all([getTags(), getGroups()]) as [any[], any[]]
+        if (!mounted) return
+        setTags(tagsData)
+        setGroups(groupsData)
+      } catch (e) {
+        console.error('加载数据失败:', e)
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
     }
-  }
+
+    loadData()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   const isTagMode = activeTab === 'tags'
   const items = isTagMode ? tags : groups

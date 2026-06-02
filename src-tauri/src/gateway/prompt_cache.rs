@@ -134,17 +134,14 @@ impl PromptCacheTracker {
         let mut entries_map = self.entries_by_account.lock().unwrap_or_else(|e| e.into_inner());
         self.prune_expired(&mut entries_map, now);
 
-        let entries = entries_map.get_mut(account_id);
-        if entries.is_none() || entries.as_ref().unwrap().is_empty() {
+        let Some(entries) = entries_map.get_mut(account_id).filter(|entries| !entries.is_empty()) else {
             // 首次请求：全部是 creation
             let effective_creation = if last_tokens >= min_tokens { last_tokens } else { 0 };
             return CacheUsage {
                 cache_creation_input_tokens: effective_creation,
                 cache_read_input_tokens: 0,
             };
-        }
-
-        let entries = entries.unwrap();
+        };
 
         // 上限 85%
         let max_cacheable = (profile.total_input_tokens as f64 * MAX_CACHE_RATIO) as usize;
@@ -325,9 +322,15 @@ impl PromptCacheTracker {
                     .into_iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_default()
+                serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_else(|error| {
+                    log::warn!("[PromptCache] cache_control 规范化序列化失败: {error}");
+                    "null".to_string()
+                })
             }
-            _ => serde_json::to_string(value).unwrap_or_default(),
+            _ => serde_json::to_string(value).unwrap_or_else(|error| {
+                log::warn!("[PromptCache] 值序列化失败: {error}");
+                "null".to_string()
+            }),
         }
     }
 

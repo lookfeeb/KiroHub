@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Bell, ShieldQuestion } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
@@ -43,9 +43,12 @@ function SettingsNotifications() {
 
   const [notifications, setNotifications] = useState<NotificationState>(DEFAULT_NOTIFICATIONS)
   const [telemetry, setTelemetry] = useState<TelemetryState>(DEFAULT_TELEMETRY)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
     let cancelled = false
+    mountedRef.current = true
+
     invoke<any>('get_kiro_settings').then(s => {
       if (cancelled || !s) return
       setNotifications({
@@ -60,15 +63,23 @@ function SettingsNotifications() {
         telemetryEditStats: s.telemetryEditStats ?? false,
         telemetryFeedback: s.telemetryFeedback ?? false,
       })
-    }).catch(() => {})
-    return () => { cancelled = true }
+    }).catch((err) => {
+      console.error('加载通知设置失败:', err)
+    })
+    return () => {
+      cancelled = true
+      mountedRef.current = false
+    }
   }, [])
 
   const showSaveError = async (err: unknown) => {
-    await showError(t('settings.saveFailed'), `${t('settings.saveFailed')}: ${err}`)
+    if (mountedRef.current) {
+      await showError(t('settings.saveFailed'), `${t('settings.saveFailed')}: ${err}`)
+    }
   }
 
   const handleNotificationChange = async (key: string, checked: boolean, field: keyof NotificationState) => {
+    const previous = notifications[field]
     setNotifications(prev => ({ ...prev, [field]: checked }))
     try {
       await invoke('set_kiro_notification', { key, enabled: checked })
@@ -77,16 +88,23 @@ function SettingsNotifications() {
         await updateAppSettings({ [appField]: checked })
       }
     } catch (err) {
+      if (mountedRef.current) {
+        setNotifications(prev => ({ ...prev, [field]: previous }))
+      }
       await showSaveError(err)
     }
   }
 
   const handleTelemetryChange = async (ideKey: string, checked: boolean, field: keyof TelemetryState) => {
+    const previous = telemetry[field]
     setTelemetry(prev => ({ ...prev, [field]: checked }))
     try {
       await invoke('set_kiro_telemetry', { key: ideKey, enabled: checked })
       await updateAppSettings({ [field]: checked })
     } catch (err) {
+      if (mountedRef.current) {
+        setTelemetry(prev => ({ ...prev, [field]: previous }))
+      }
       await showSaveError(err)
     }
   }

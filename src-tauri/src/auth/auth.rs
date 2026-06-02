@@ -81,7 +81,10 @@ pub async fn refresh_token_desktop(refresh_token: &str) -> Result<DesktopRefresh
         {
             Ok(response) => {
                 let status = response.status();
-                let text = response.text().await.unwrap_or_default();
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|e| format!("读取 RefreshToken 响应失败: {e}"))?;
 
                 // 只在调试时输出状态码，不输出敏感的 token 内容
                 #[cfg(debug_assertions)]
@@ -133,7 +136,10 @@ pub async fn delete_account_desktop(access_token: &str, machine_id: &str) -> Res
     println!("[Desktop] DeleteAccount Status: {status}");
 
     if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("读取删除账号响应失败: {e}"))?;
         return Err(format!("删除账号失败 ({status}): {text}"));
     }
 

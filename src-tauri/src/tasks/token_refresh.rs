@@ -33,6 +33,10 @@ impl TokenRefreshService {
                     log::error!("Token refresh loop error: {}", e);
                 }
 
+                if let Err(e) = self.refresh_cli_token_if_expiring().await {
+                    log::error!("CLI token refresh loop error: {}", e);
+                }
+
                 if let Err(e) = self.refresh_reset_due_quotas().await {
                     log::error!("Reset-due quota refresh error: {}", e);
                 }
@@ -170,6 +174,19 @@ impl TokenRefreshService {
             let _ = self.app_handle.emit("accounts-updated", ());
         }
 
+        Ok(())
+    }
+
+    /// CLI token 过期前 3 分钟自动刷新，避免首页显示“已过期”后才处理。
+    async fn refresh_cli_token_if_expiring(&self) -> Result<(), String> {
+        match crate::commands::kiro_cli_cmd::refresh_default_cli_db_token_if_expiring().await {
+            Ok(true) => {
+                log::info!("Kiro CLI token auto-refreshed before expiry");
+                let _ = self.app_handle.emit("cli-token-updated", ());
+            }
+            Ok(false) => {}
+            Err(e) => log::warn!("Kiro CLI token auto-refresh skipped/failed: {e}"),
+        }
         Ok(())
     }
 

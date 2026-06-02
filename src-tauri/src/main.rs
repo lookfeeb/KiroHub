@@ -40,10 +40,9 @@ use commands::account_cmd::{
 };
 //应用设置
 use commands::app_settings_cmd::{
-    bind_machine_id_to_account, get_all_bound_machine_ids, get_app_settings, get_bound_machine_id,
-    get_usage_history, save_app_settings, save_usage_history_entry, unbind_machine_id_from_account,
+    get_app_settings, get_usage_history, save_app_settings, save_usage_history_entry,
     get_custom_kiro_path, set_custom_kiro_path, clear_custom_kiro_path,
-    get_current_cli_account_id,
+    get_autostart_enabled, get_current_cli_account_id, set_autostart_enabled,
 };
 use commands::app_data_cmd::{backup_app_database, get_app_data_dir, open_app_data_dir};
 //授权相关
@@ -75,13 +74,13 @@ use commands::group_tag_cmd::{
 //kiro-cli
 use commands::kiro_cli_cmd::{
     check_cli_installation, get_kiro_cli_default_path, import_from_kiro_cli,
-    read_cli_db_snapshot, rollback_cli_switch, switch_to_cli_account,
+    read_cli_db_snapshot, refresh_cli_db_token, rollback_cli_switch, switch_to_cli_account,
 };
 use commands::kiro_settings_cmd::{
     get_kiro_settings, set_kiro_agent_autonomy, set_kiro_codebase_indexing, set_kiro_configure_mcp,
-    set_kiro_debug_logs, set_kiro_model, set_kiro_notification, set_kiro_proxy,
-    set_kiro_reference_tracker, set_kiro_tab_autocomplete, set_kiro_telemetry,
-    set_kiro_trusted_commands, set_kiro_trusted_tools, set_kiro_usage_summary,
+    set_kiro_debug_logs, set_kiro_model, set_kiro_notification, set_kiro_reference_tracker,
+    set_kiro_tab_autocomplete, set_kiro_telemetry, set_kiro_trusted_commands,
+    set_kiro_trusted_tools, set_kiro_usage_summary,
 };
 use commands::machine_guid::{
     clear_macos_override, generate_machine_guid,
@@ -89,18 +88,21 @@ use commands::machine_guid::{
     set_custom_machine_guid,
 };
 use commands::mcp_cmd::{
-    delete_mcp_server, delete_mcp_server_synced, discover_and_import_mcp_servers, get_mcp_config,
-    get_mcp_tool_stats, save_mcp_server, toggle_mcp_server,
+    copy_mcp_server_to_client, delete_mcp_server, delete_mcp_server_by_client,
+    delete_mcp_server_synced, discover_and_import_mcp_servers, get_mcp_clients_overview,
+    get_mcp_config, get_mcp_config_by_client, get_mcp_tool_stats, get_mcp_tool_stats_by_client,
+    save_mcp_server, toggle_mcp_server, toggle_mcp_server_by_client,
 };
-use commands::mcp_oauth_cmd::{mcp_oauth_authorize, mcp_oauth_revoke, mcp_oauth_status};
+use commands::mcp_oauth_cmd::{
+    mcp_oauth_authorize, mcp_oauth_authorize_for_client, mcp_oauth_refresh_for_client,
+    mcp_oauth_revoke, mcp_oauth_revoke_for_client, mcp_oauth_status,
+    mcp_oauth_status_for_client,
+};
 
 use commands::session_manager::{
-    list_workspaces, list_sessions, load_session, delete_session, delete_workspace, export_session, search_sessions, get_session_file_path, refresh_session_cache,
+    list_workspaces, list_sessions, list_session_tree, load_session, delete_session, delete_workspace, export_session, search_sessions, get_session_file_path, refresh_session_cache,
 };
 
-
-//代理
-use commands::proxy_cmd::detect_system_proxy;
 
 //Kiro IDE
 use crate::kiro::ide::{
@@ -110,7 +112,7 @@ use crate::kiro::ide::{
 //Kiro进程
 use crate::kiro::process::{close_kiro_ide, is_kiro_ide_running, start_kiro_ide};
 
-use commands::update_cmd::check_update;
+use commands::update_cmd::{check_update, get_release_changelog};
 
 /// 配置日志插件
 fn setup_log_plugin() -> tauri_plugin_log::Builder {
@@ -285,21 +287,30 @@ fn setup_system_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         Manager,
     };
 
+    fn show_main_window(app: &tauri::AppHandle) {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
-    let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("KiroHub")
+    let mut tray_builder = TrayIconBuilder::new().tooltip("KiroHub");
+    if let Some(icon) = app.default_window_icon() {
+        tray_builder = tray_builder.icon(icon.clone());
+    }
+
+    let _tray = tray_builder
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
             "quit" => {
                 app.exit(0);
@@ -314,10 +325,7 @@ fn setup_system_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
         })
         .build(app)?;
@@ -337,7 +345,7 @@ fn setup_window_close_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::e
                 let settings = commands::app_settings_cmd::get_app_settings_inner()
                     .unwrap_or_default();
 
-                if settings.close_to_tray.unwrap_or(false) {
+                if settings.close_to_tray.unwrap_or(true) {
                     // 最小化到托盘
                     api.prevent_close();
                     let _ = window_clone.hide();
@@ -375,7 +383,16 @@ fn main() {
     if let Err(e) = db::init_global() {
         eprintln!("[DB] 全局连接池初始化失败: {e}");
     }
-    tauri::Builder::default()
+
+    let session_storage = match SessionStorage::new() {
+        Ok(storage) => storage,
+        Err(error) => {
+            eprintln!("[SessionStorage] 初始化失败: {error}");
+            return;
+        }
+    };
+
+    if let Err(error) = tauri::Builder::default()
         .plugin(setup_log_plugin().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -395,7 +412,7 @@ fn main() {
             pending_login: Mutex::new(None),
             gateway: Mutex::new(None),
         })
-        .manage(SessionStorage::new().expect("Failed to initialize SessionStorage"))
+        .manage(session_storage)
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             // 账号命令
@@ -427,6 +444,7 @@ fn main() {
             import_from_kiro_cli,
             check_cli_installation,
             read_cli_db_snapshot,
+            refresh_cli_db_token,
             switch_to_cli_account,
             rollback_cli_switch,
             // 分组与标签命令
@@ -466,7 +484,6 @@ fn main() {
             // Kiro IDE 设置命令（仅保留 model_lock 依赖）
             get_kiro_settings,
             set_kiro_model,
-            set_kiro_proxy,
             set_kiro_codebase_indexing,
             set_kiro_trusted_commands,
             set_kiro_agent_autonomy,
@@ -482,14 +499,11 @@ fn main() {
             get_app_settings,
             save_app_settings,
             get_current_cli_account_id,
+            get_autostart_enabled,
+            set_autostart_enabled,
             // 使用量历史记录命令
             get_usage_history,
             save_usage_history_entry,
-            // 账号绑定机器码命令
-            bind_machine_id_to_account,
-            unbind_machine_id_from_account,
-            get_bound_machine_id,
-            get_all_bound_machine_ids,
             // 系统机器码命令
             get_system_machine_guid,
             reset_system_machine_guid,
@@ -507,9 +521,19 @@ fn main() {
             get_mcp_tool_stats,
             discover_and_import_mcp_servers,
             delete_mcp_server_synced,
+            get_mcp_clients_overview,
+            get_mcp_config_by_client,
+            get_mcp_tool_stats_by_client,
+            toggle_mcp_server_by_client,
+            delete_mcp_server_by_client,
+            copy_mcp_server_to_client,
             mcp_oauth_authorize,
             mcp_oauth_status,
             mcp_oauth_revoke,
+            mcp_oauth_authorize_for_client,
+            mcp_oauth_status_for_client,
+            mcp_oauth_refresh_for_client,
+            mcp_oauth_revoke_for_client,
             // Gateway 命令
             start_gateway,
             stop_gateway,
@@ -530,13 +554,13 @@ fn main() {
             clear_all_cache,
             clear_session_cache,
             cleanup_expired_cache,
-            // 代理检测命令
-            detect_system_proxy,
             // 更新检查命令
             check_update,
+            get_release_changelog,
             // Session Manager 命令
             list_workspaces,
             list_sessions,
+            list_session_tree,
             load_session,
             get_session_file_path,
             delete_session,
@@ -555,5 +579,7 @@ fn main() {
             backup_app_database
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        eprintln!("[Tauri] 应用运行失败: {error}");
+    }
 }

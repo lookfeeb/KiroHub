@@ -60,10 +60,10 @@ pub fn start_auto_switch_task(app_handle: AppHandle) {
             let interval_minutes = settings
                 .auto_switch_interval
                 .unwrap_or(DEFAULT_INTERVAL);
-            
+
             // 获取自动刷新间隔
             let refresh_interval = settings.auto_refresh_interval.unwrap_or(50);
-            
+
             // 如果自动换号间隔小于自动刷新间隔，发出警告
             if interval_minutes < refresh_interval {
                 log::warn!(
@@ -72,7 +72,7 @@ pub fn start_auto_switch_task(app_handle: AppHandle) {
                     refresh_interval
                 );
             }
-            
+
             let interval_duration = Duration::from_secs((interval_minutes as u64) * 60);
 
             log::info!(
@@ -299,7 +299,7 @@ async fn switch_account(_app_handle: &AppHandle, account: &Account) -> Result<()
     let settings = get_app_settings_inner().map_err(|e| e.to_string())?;
 
     // 应用机器码（如果需要）
-    let account_to_switch = apply_machine_guid(account, &settings)?;
+    let account_to_switch = apply_machine_guid(account, &settings).await?;
 
     // 构建切换参数
     let params = build_switch_params(&account_to_switch);
@@ -313,18 +313,36 @@ async fn switch_account(_app_handle: &AppHandle, account: &Account) -> Result<()
 }
 
 /// 应用机器码
-fn apply_machine_guid(
-    account: &Account,
-    settings: &AppSettings,
-) -> Result<Account, String> {
+async fn apply_machine_guid(account: &Account, settings: &AppSettings) -> Result<Account, String> {
     let account = account.clone();
 
-    // 如果启用了机器码绑定
-    if settings.bind_machine_id_to_account == Some(true) {
-        // 查找绑定的机器码（从 account.machine_id 字段）
-        if let Some(machine_id) = &account.machine_id {
-            // 这里不需要修改 account，因为 machine_id 已经在 account 中了
-            log::debug!("[AutoSwitch] 使用绑定的机器码: {}", machine_id);
+    if settings.auto_change_machine_id != Some(true) {
+        return Ok(account);
+    }
+
+    let next_machine_id = if settings.bind_machine_id_to_account == Some(true) {
+        account
+            .machine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+    } else {
+        Some(crate::commands::machine_guid::generate_random_machine_id())
+    };
+
+    if let Some(machine_id) = next_machine_id {
+        let applied = tokio::task::spawn_blocking({
+            let machine_id = machine_id.clone();
+            move || crate::commands::machine_guid::set_custom_machine_guid_sync(machine_id)
+        })
+        .await
+        .map_err(|e| format!("应用机器码任务失败: {e}"))??;
+
+        if settings.bind_machine_id_to_account == Some(true) {
+            log::debug!("[AutoSwitch] 已应用账号绑定机器码: {}", applied);
+        } else {
+            log::debug!("[AutoSwitch] 已应用随机机器码: {}", applied);
         }
     }
 

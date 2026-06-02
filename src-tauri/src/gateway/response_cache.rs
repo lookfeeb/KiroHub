@@ -67,8 +67,8 @@ impl CacheEntry {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
         now >= self.expires_at
     }
 
@@ -102,7 +102,8 @@ pub struct ResponseCache {
 impl ResponseCache {
     /// 创建新的响应缓存
     pub fn new(config: CacheConfig, cache_dir: Option<PathBuf>) -> Self {
-        let lru_capacity = NonZeroUsize::new(config.lru_cache_capacity).unwrap();
+        let lru_capacity = NonZeroUsize::new(config.lru_cache_capacity)
+            .unwrap_or(NonZeroUsize::MIN);
 
         Self {
             config,
@@ -180,8 +181,8 @@ impl ResponseCache {
         let key = Self::cache_key(session_id, messages_hash);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
 
         let entry = CacheEntry {
             response,
@@ -220,7 +221,7 @@ impl ResponseCache {
                 let _ = fs::remove_dir_all(cache_dir);
                 let _ = fs::create_dir_all(cache_dir);
             }
-            if let Ok(conn) = crate::db::pool().get() {
+            if let Ok(conn) = crate::db::connection() {
                 let _ = conn.execute("DELETE FROM response_cache_meta", []);
             }
         }
@@ -267,7 +268,7 @@ impl ResponseCache {
 
     /// 把缓存元数据写入 response_cache_meta（cache_key 用 sanitize 后的键，与磁盘文件名一致）。
     fn upsert_cache_meta(key: &str, entry: &CacheEntry) {
-        let Ok(conn) = crate::db::pool().get() else { return };
+        let Ok(conn) = crate::db::connection() else { return };
         let session_id = key.split(':').next().unwrap_or("");
         let _ = conn.execute(
             "INSERT INTO response_cache_meta(cache_key,session_id,created_at,expires_at,input_tokens,output_tokens,message_count,total_chars) \
@@ -290,7 +291,7 @@ impl ResponseCache {
 
     /// 删除某 key 的缓存元数据。
     fn delete_cache_meta(key: &str) {
-        if let Ok(conn) = crate::db::pool().get() {
+        if let Ok(conn) = crate::db::connection() {
             let _ = conn.execute(
                 "DELETE FROM response_cache_meta WHERE cache_key=?1",
                 [Self::sanitize_key(key)],
@@ -342,11 +343,11 @@ impl ResponseCache {
         }
 
         // 同步清理过期元数据
-        if let Ok(conn) = crate::db::pool().get() {
+        if let Ok(conn) = crate::db::connection() {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
             let _ = conn.execute(
                 "DELETE FROM response_cache_meta WHERE expires_at <= ?1",
                 [now as i64],

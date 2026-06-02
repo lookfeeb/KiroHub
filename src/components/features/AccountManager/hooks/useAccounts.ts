@@ -30,7 +30,15 @@ export function useAccounts() {
   })
   const [lastRefreshTime, setLastRefreshTime] = useState<string | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
+  const mountedRef = useRef(true)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   // 判断账号是否即将过期（5分钟内）
   const isExpiringSoon = useCallback((account: Account) => {
@@ -52,11 +60,12 @@ export function useAccounts() {
       const normalizedAccounts = Array.isArray(loadedAccounts)
         ? loadedAccounts.map(normalizeAccountForUi)
         : []
+      if (!mountedRef.current) return
       setAccounts(normalizedAccounts)
     } catch (e) {
-      // 错误处理
+      console.error('加载账号失败:', e)
     } finally {
-      if (!silent) setLoading(false)
+      if (!silent && mountedRef.current) setLoading(false)
     }
   }, [])
 
@@ -64,10 +73,9 @@ export function useAccounts() {
   const batchRefreshAccounts = useCallback(async (accountIds: string[], accountList: Account[]) => {
     if (autoRefreshing || accountList.length === 0) return
     
-    const validAccounts = accountList.filter(acc => !isUnavailableStatus(acc))
     const accountsToRefresh = accountIds.length > 0
-      ? validAccounts.filter(acc => accountIds.includes(acc.id))
-      : validAccounts.filter(isExpiringSoon)
+      ? accountList.filter(acc => accountIds.includes(acc.id))
+      : accountList.filter(acc => !isUnavailableStatus(acc)).filter(isExpiringSoon)
     
     if (accountsToRefresh.length === 0) return
 
@@ -95,22 +103,25 @@ export function useAccounts() {
         const idx = updatedAccounts.findIndex(a => a.id === account.id)
         if (errorMsg.includes('BANNED')) {
           message = '账号已封禁'
-          if (idx !== -1) updatedAccounts[idx] = { ...updatedAccounts[idx], status: 'banned' }
+          if (idx !== -1) updatedAccounts[idx] = { ...updatedAccounts[idx], status: 'banned', enabled: false }
         } else if (errorMsg.includes('AUTH_ERROR') || errorMsg.includes('401') || errorMsg.includes('invalid')) {
           message = '账号已失效'
-          if (idx !== -1) updatedAccounts[idx] = { ...updatedAccounts[idx], status: 'invalid' }
+          if (idx !== -1) updatedAccounts[idx] = { ...updatedAccounts[idx], status: 'invalid', enabled: false }
         } else {
           message = errorMsg.slice(0, 30)
         }
       }
       completed++
       results.push({ email: getSafeAccountDisplayName(account), success, message })
-      setRefreshProgress({ current: completed, total: accountsToRefresh.length, currentEmail: '', results: [...results] })
+      if (mountedRef.current) {
+        setRefreshProgress({ current: completed, total: accountsToRefresh.length, currentEmail: '', results: [...results] })
+      }
       return { account, success, message }
     }
 
     for (let i = 0; i < accountsToRefresh.length; i += concurrency) {
       const batch = accountsToRefresh.slice(i, i + concurrency)
+      if (!mountedRef.current) return
       setRefreshProgress(prev => ({
         ...prev,
         currentEmail: batch.map(a => getSafeAccountDisplayName(a).split('@')[0]).join(', ')
@@ -118,6 +129,7 @@ export function useAccounts() {
       await Promise.all(batch.map(refreshOne))
     }
 
+    if (!mountedRef.current) return
     setAccounts(updatedAccounts)
     setLastRefreshTime(new Date().toLocaleTimeString())
     emit('accounts-updated')
@@ -125,6 +137,7 @@ export function useAccounts() {
       clearTimeout(refreshTimerRef.current)
     }
     refreshTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return
       setAutoRefreshing(false)
       setRefreshProgress({ current: 0, total: 0, currentEmail: '', results: [] })
     }, 1500)
@@ -135,24 +148,36 @@ export function useAccounts() {
     try {
       const syncResult = await invoke<{ account: any }>('sync_account', { id })
       const updated = normalizeAccountForUi(syncResult.account)
-      setAccounts(prev => prev.map(a => a.id === id ? updated : a))
+      if (mountedRef.current) {
+        setAccounts(prev => prev.map(a => a.id === id ? updated : a))
+      }
       return { success: true, data: updated }
     } catch (e) {
       const errorMsg = String(e)
       if (errorMsg.includes('BANNED')) {
         try {
-          await invoke('update_account', { params: { id, status: 'banned' } })
-          setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'banned' } : a))
-        } catch (updateErr) {}
+          await invoke('update_account', { params: { id, status: 'banned', enabled: false } })
+          if (mountedRef.current) {
+            setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'banned', enabled: false } : a))
+          }
+        } catch (updateErr) {
+          console.error('持久化封禁账号状态失败:', updateErr)
+        }
       } else if (errorMsg.includes('AUTH_ERROR') || errorMsg.includes('401') || errorMsg.includes('invalid')) {
         try {
-          await invoke('update_account', { params: { id, status: 'invalid' } })
-          setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'invalid' } : a))
-        } catch (updateErr) {}
+          await invoke('update_account', { params: { id, status: 'invalid', enabled: false } })
+          if (mountedRef.current) {
+            setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'invalid', enabled: false } : a))
+          }
+        } catch (updateErr) {
+          console.error('持久化失效账号状态失败:', updateErr)
+        }
       }
       return { success: false, error: errorMsg }
     } finally {
-      setRefreshingId(null)
+      if (mountedRef.current) {
+        setRefreshingId(null)
+      }
     }
   }, [])
 
@@ -174,11 +199,14 @@ export function useAccounts() {
         title: '导出账号数据'
       })
       
-      if (!filePath) return
+      if (!mountedRef.current || !filePath) return
       
       const json = await invoke<string>('export_accounts', { ids: selectedIds })
+      if (!mountedRef.current) return
       await writeTextFile(filePath, json)
-    } catch (e) {}
+    } catch (e) {
+      console.error('导出账号失败:', e)
+    }
   }, [])
 
   useEffect(() => {
@@ -187,14 +215,24 @@ export function useAccounts() {
     let unlistenKiroLoginData: UnlistenFn | null = null
     let mounted = true
 
+    const setUnlisten = (setter: (fn: UnlistenFn) => void) => (fn: UnlistenFn) => {
+      if (mounted) {
+        setter(fn)
+      } else {
+        fn()
+      }
+    }
+
     const setupListeners = async () => {
-      unlistenLoginSuccess = await listen('login-success', () => {
+      listen('login-success', () => {
         if (mounted) loadAccounts()
-      })
-      unlistenAccountsUpdated = await listen('accounts-updated', () => {
+      }).then(setUnlisten(fn => { unlistenLoginSuccess = fn }))
+
+      listen('accounts-updated', () => {
         if (mounted) loadAccounts()
-      })
-      unlistenKiroLoginData = await listen<any>('kiro-login-data', async (event) => {
+      }).then(setUnlisten(fn => { unlistenAccountsUpdated = fn }))
+
+      listen<any>('kiro-login-data', async (event) => {
         if (!mounted) return
         try {
           const data = typeof event.payload === 'string' ? JSON.parse(event.payload) : event.payload
@@ -205,8 +243,10 @@ export function useAccounts() {
             })
             if (mounted) loadAccounts()
           }
-        } catch (e) {}
-      })
+        } catch (e) {
+          console.error('导入登录事件账号失败:', e)
+        }
+      }).then(setUnlisten(fn => { unlistenKiroLoginData = fn }))
     }
 
     loadAccounts()

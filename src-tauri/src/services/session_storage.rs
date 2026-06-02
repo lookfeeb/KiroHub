@@ -1,7 +1,9 @@
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use anyhow::{Result, Context};
-use crate::models::ide_session::{IdeSession, SessionSummary, HistoryItem, Message, ContentItem};
+use crate::models::ide_session::{IdeSession, SessionSummary, HistoryItem, Message, ContentItem, SessionTree};
 use super::external_sessions;
 
 // 安全限制
@@ -86,29 +88,27 @@ impl SessionStorage {
     /// 列出所有 workspace
     pub fn list_workspaces(&self) -> Result<Vec<String>> {
         let mut workspaces = Vec::new();
-        
-        if !self.base_path.exists() {
-            return Ok(workspaces);
-        }
-        
-        // 收集工作区及其修改时间
-        let mut workspace_with_time: Vec<(String, std::time::SystemTime)> = Vec::new();
-        
-        for entry in fs::read_dir(&self.base_path)
-            .context("Failed to read workspace-sessions directory")? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let modified = entry.metadata()?.modified()?;
-                workspace_with_time.push((name, modified));
+
+        if self.base_path.exists() {
+            // 收集工作区及其修改时间
+            let mut workspace_with_time: Vec<(String, std::time::SystemTime)> = Vec::new();
+
+            for entry in fs::read_dir(&self.base_path)
+                .context("Failed to read workspace-sessions directory")? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let modified = entry.metadata()?.modified()?;
+                    workspace_with_time.push((name, modified));
+                }
             }
+
+            // 按修改时间倒序排序（最近使用的在前）
+            workspace_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+
+            // 只返回名称
+            workspaces = workspace_with_time.into_iter().map(|(name, _)| name).collect();
         }
-        
-        // 按修改时间倒序排序（最近使用的在前）
-        workspace_with_time.sort_by(|a, b| b.1.cmp(&a.1));
-        
-        // 只返回名称
-        workspaces = workspace_with_time.into_iter().map(|(name, _)| name).collect();
 
         // CLI 会话按工作目录(cwd)分组为多个工作区，置顶
         let mut cli_ws: Vec<String> = Vec::new();
@@ -124,6 +124,61 @@ impl SessionStorage {
         workspaces.extend(external_sessions::list_workspaces());
 
         Ok(workspaces)
+    }
+
+    /// 一次性列出 workspace 和会话摘要，供前端启动/刷新批量加载
+    pub fn list_session_tree(&self) -> Result<SessionTree> {
+        let mut workspaces = Vec::new();
+        let mut sessions_by_workspace: HashMap<String, Vec<SessionSummary>> = HashMap::new();
+
+        let cli_sessions = self.collect_cli_sessions(None);
+        for session in cli_sessions {
+            if !workspaces.contains(&session.workspace_hash) {
+                workspaces.push(session.workspace_hash.clone());
+            }
+            sessions_by_workspace
+                .entry(session.workspace_hash.clone())
+                .or_default()
+                .push(session);
+        }
+
+        if self.base_path.exists() {
+            let mut workspace_with_time: Vec<(String, std::time::SystemTime)> = Vec::new();
+            for entry in fs::read_dir(&self.base_path)
+                .context("Failed to read workspace-sessions directory")? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let modified = entry.metadata()?.modified()?;
+                    workspace_with_time.push((name, modified));
+                }
+            }
+            workspace_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+
+            for (workspace, _) in workspace_with_time {
+                if !workspaces.contains(&workspace) {
+                    workspaces.push(workspace.clone());
+                }
+                sessions_by_workspace
+                    .insert(workspace.clone(), self.list_sessions(&workspace)?);
+            }
+        }
+
+        for session in external_sessions::list_all_sessions() {
+            if !workspaces.contains(&session.workspace_hash) {
+                workspaces.push(session.workspace_hash.clone());
+            }
+            sessions_by_workspace
+                .entry(session.workspace_hash.clone())
+                .or_default()
+                .push(session);
+        }
+
+        for sessions in sessions_by_workspace.values_mut() {
+            sessions.sort_by(|a, b| b.modified_at.unwrap_or(0).cmp(&a.modified_at.unwrap_or(0)));
+        }
+
+        Ok(SessionTree { workspaces, sessions_by_workspace })
     }
     
     /// 列出指定 workspace 的所有 sessions
@@ -390,14 +445,19 @@ impl SessionStorage {
         if size == 0 || size > MAX_FILE_SIZE {
             return (0, size);
         }
-        let count = fs::read_to_string(jsonl)
-            .map(|c| c.lines().filter(|l| {
+        let count = fs::File::open(jsonl)
+            .map(|file| {
+                BufReader::new(file)
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter(|l| {
                 serde_json::from_str::<serde_json::Value>(l)
                     .ok()
                     .and_then(|v| v.get("kind").and_then(|k| k.as_str())
                         .map(|k| k == "Prompt" || k == "AssistantMessage"))
                     .unwrap_or(false)
-            }).count())
+            }).count()
+            })
             .unwrap_or(0);
         (count, size)
     }
@@ -418,8 +478,14 @@ impl SessionStorage {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else { continue };
+            let Ok(content) = fs::read_to_string(&path) else {
+                eprintln!("[SessionStorage] 读取 CLI 会话元数据失败: {}", path.display());
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else {
+                eprintln!("[SessionStorage] 解析 CLI 会话元数据失败: {}", path.display());
+                continue;
+            };
             if meta.session_id.is_empty() {
                 continue;
             }
@@ -461,10 +527,11 @@ impl SessionStorage {
             return Err(anyhow::anyhow!("Invalid session id"));
         }
         let dir = Self::cli_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
-        let meta: CliSessionMeta = fs::read_to_string(dir.join(format!("{session_id}.json")))
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-            .unwrap_or_default();
+        let meta_path = dir.join(format!("{session_id}.json"));
+        let meta_content = fs::read_to_string(&meta_path)
+            .with_context(|| format!("Failed to read kiro-cli session metadata: {}", meta_path.display()))?;
+        let meta: CliSessionMeta = serde_json::from_str(&meta_content)
+            .with_context(|| format!("Failed to parse kiro-cli session metadata: {}", meta_path.display()))?;
 
         let jsonl_path = dir.join(format!("{session_id}.jsonl"));
         let mut history = Vec::new();
@@ -556,8 +623,14 @@ impl SessionStorage {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else { continue };
+            let Ok(content) = fs::read_to_string(&path) else {
+                eprintln!("[SessionStorage] 读取 CLI 会话元数据失败: {}", path.display());
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<CliSessionMeta>(&content) else {
+                eprintln!("[SessionStorage] 解析 CLI 会话元数据失败: {}", path.display());
+                continue;
+            };
             if meta.cwd.as_deref().unwrap_or_default() == cwd && !meta.session_id.is_empty() {
                 let _ = self.delete_cli_session(&meta.session_id);
             }

@@ -3,7 +3,7 @@ import { Search, FileDown, RefreshCcw, RotateCw, Trash2, ArrowUp, ArrowDown, X, 
 import { useApp } from '../../../hooks/useApp'
 import FilterDropdown from './FilterDropdown'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipIconButton } from '@/components/ui/actions/tooltip-icon-button'
 
 interface AccountHeaderProps {
   searchTerm: string;
@@ -58,20 +58,16 @@ function IconButton({ onClick, active, disabled, title, ariaLabel, accent, badge
     ? `${accent.solidBg} text-white shadow-sm`
     : 'glass-card border border-border hover:bg-muted/50 text-muted-foreground'
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          disabled={disabled}
-          aria-label={ariaLabel || title}
-          className={`${base} ${variant} ${accent.ring} ${className}`}
-        >
-          {children}
-          {badge}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>{title}</TooltipContent>
-    </Tooltip>
+    <TooltipIconButton
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel || title}
+      tooltip={title}
+      className={`${base} ${variant} ${accent.ring} ${className}`}
+    >
+      {children}
+      {badge}
+    </TooltipIconButton>
   )
 }
 
@@ -114,6 +110,13 @@ function AccountHeader({
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
   const searchRef = useRef<HTMLDivElement>(null)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const refreshTimersRef = useRef<NodeJS.Timeout[]>([])
+  const mountedRef = useRef(true)
+
+  const clearRefreshTimers = useCallback(() => {
+    refreshTimersRef.current.forEach(timer => clearTimeout(timer))
+    refreshTimersRef.current = []
+  }, [])
 
   // 搜索防抖
   const handleSearchChange = useCallback((value: string) => {
@@ -123,10 +126,13 @@ function AccountHeader({
   }, [onSearchChange])
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      clearRefreshTimers()
     }
-  }, [])
+  }, [clearRefreshTimers])
 
   useEffect(() => {
     setLocalSearchTerm(searchTerm)
@@ -291,7 +297,25 @@ function AccountHeader({
             <IconButton onClick={onExport} title={t('accounts.export')} accent={accent}>
               <FileDown size={14} className={accent.text} />
             </IconButton>
-            <IconButton onClick={() => { setRefreshSpin(true); setRefreshDone(false); onRefresh(); setTimeout(() => { setRefreshSpin(false); setRefreshDone(true); setTimeout(() => setRefreshDone(false), 900) }, 600) }} title={t('accounts.refreshList')} accent={accent}>
+            <IconButton
+              onClick={() => {
+                clearRefreshTimers()
+                setRefreshSpin(true)
+                setRefreshDone(false)
+                onRefresh()
+                refreshTimersRef.current.push(setTimeout(() => {
+                  if (!mountedRef.current) return
+                  setRefreshSpin(false)
+                  setRefreshDone(true)
+                  refreshTimersRef.current.push(setTimeout(() => {
+                    if (!mountedRef.current) return
+                    setRefreshDone(false)
+                  }, 900))
+                }, 600))
+              }}
+              title={t('accounts.refreshList')}
+              accent={accent}
+            >
               {refreshDone
                 ? <Check size={14} className="text-green-500" />
                 : <RotateCw size={14} className={refreshSpin ? 'animate-spin' : ''} />}

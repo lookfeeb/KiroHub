@@ -1,6 +1,6 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { AlertTriangle, ExternalLink, MessageCircle } from 'lucide-react'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Checkbox } from '@/components/ui/forms/checkbox'
 import { useApp } from '../../hooks/useApp'
 
 // 公告 API
@@ -25,56 +25,68 @@ export default function AnnouncementModal() {
     info: 'bg-primary/10'
   }
   useEffect(() => {
-    fetchAnnouncement()
-  }, [])
+    let mounted = true
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
 
-  const fetchAnnouncement = async () => {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
+    const fetchAnnouncement = async () => {
+      try {
+        // 从公告 API 获取公告列表
+        const res = await fetch(ANNOUNCEMENT_API, {
+          signal: controller.signal,
+          cache: 'no-cache'
+        })
+
+        if (!res.ok) {
+          return
+        }
       
-      // 从公告 API 获取公告列表
-      const res = await fetch(ANNOUNCEMENT_API, {
-        signal: controller.signal,
-        cache: 'no-cache'
-      })
+        const data = await res.json()
       
-      clearTimeout(timeoutId)
+        // 获取第一个启用的公告
+        const announcement = data.announcements?.find(a => a.enabled)
       
-      if (!res.ok) {
-        return
+        if (!announcement) {
+          return
+        }
+      
+        // 检查是否已读过此公告
+        const readAnnouncements = JSON.parse(localStorage.getItem('readAnnouncements') || '[]')
+        if (readAnnouncements.includes(announcement.id)) {
+          return
+        }
+
+        if (!mounted) {
+          return
+        }
+
+        // 补充固定链接（如果公告中没有）
+        setAnnouncement({
+          ...announcement,
+          websiteUrl: announcement.websiteUrl || WEBSITE_URL,
+          officialUrl: announcement.officialUrl || GITHUB_URL,
+          tutorialUrl: announcement.tutorialUrl || TUTORIAL_URL,
+          tgChannel: announcement.tgChannel || TG_CHANNEL,
+          tgGroup: announcement.tgGroup || TG_GROUP
+        })
+        setShow(true)
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.error('[Announcement] 获取失败:', e)
+        }
+      } finally {
+        clearTimeout(timeoutId)
       }
-      
-      const data = await res.json()
-      
-      // 获取第一个启用的公告
-      const announcement = data.announcements?.find(a => a.enabled)
-      
-      if (!announcement) {
-        return
-      }
-      
-      // 检查是否已读过此公告
-      const readAnnouncements = JSON.parse(localStorage.getItem('readAnnouncements') || '[]')
-      if (readAnnouncements.includes(announcement.id)) {
-        return
-      }
-      
-      // 补充固定链接（如果公告中没有）
-      setAnnouncement({
-        ...announcement,
-        websiteUrl: announcement.websiteUrl || WEBSITE_URL,
-        officialUrl: announcement.officialUrl || GITHUB_URL,
-        tutorialUrl: announcement.tutorialUrl || TUTORIAL_URL,
-        tgChannel: announcement.tgChannel || TG_CHANNEL,
-        tgGroup: announcement.tgGroup || TG_GROUP
-      })
-      setShow(true)
-    } catch (e) {
-      // 静默失败，不影响应用使用
-      console.error('[Announcement] 获取失败:', e)
     }
-  }
+
+    fetchAnnouncement()
+
+    return () => {
+      mounted = false
+      clearTimeout(timeoutId)
+      controller.abort()
+    }
+  }, [])
 
   const handleClose = (dontRemind = false) => {
     if (dontRemind && announcement) {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useApp } from '../../hooks/useApp'
 
@@ -6,6 +6,14 @@ export default function AuthCallback() {
   const { t} = useApp()
   const [status, setStatus] = useState('loading')
   const [message, setMessage] = useState('')
+  const mountedRef = useRef(true)
+  const timersRef = useRef<NodeJS.Timeout[]>([])
+
+  const schedule = (fn: () => void, delay: number) => {
+    const timer = setTimeout(fn, delay)
+    timersRef.current.push(timer)
+    return timer
+  }
   
   const colors = useMemo(() => ({
     statusLoadingBorder: 'border-primary/40',
@@ -38,22 +46,29 @@ export default function AuthCallback() {
     window.close()
     
     // 如果窗口未关闭，显示提示
-    setTimeout(() => {
-      if (!document.hidden) {
+    schedule(() => {
+      if (mountedRef.current && !document.hidden) {
         setMessage('如果窗口未自动关闭，请手动关闭此页面并返回应用。')
       }
     }, 500)
   }
 
   useEffect(() => {
+    mountedRef.current = true
     // 后端 login_social 已完成 OAuth 流程（token 交换 + 保存账号）
     // 前端只需显示成功并跳转
     setStatus('success')
     setMessage(t('callback.success'))
 
-    setTimeout(() => {
+    schedule(() => {
       closeCurrentPage()
     }, 1500)
+
+    return () => {
+      mountedRef.current = false
+      timersRef.current.forEach(timer => clearTimeout(timer))
+      timersRef.current = []
+    }
   }, [t])
 
   const getStatusIcon = () => {

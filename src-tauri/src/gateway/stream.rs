@@ -283,7 +283,10 @@ pub fn parse_kiro_event_full(json_str: &str) -> Option<KiroEvent> {
                 log::debug!("[Tool Use] input 是字符串: {}", text.chars().take(100).collect::<String>());
                 text.to_string()
             } else if input.is_object() || input.is_array() {
-                let serialized = serde_json::to_string(input).unwrap_or_default();
+                let serialized = serde_json::to_string(input).unwrap_or_else(|error| {
+                    log::warn!("[Tool Use] input 序列化失败: {error}");
+                    String::new()
+                });
                 log::debug!("[Tool Use] input 是对象/数组，序列化后: {}", serialized.chars().take(100).collect::<String>());
                 serialized
             } else {
@@ -739,8 +742,8 @@ pub fn build_openai_response(
     let completion_id = format!("chatcmpl-{}", Uuid::new_v4().simple());
     let created = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
 
     let mut message = OpenAIChatResponseMessage {
         role: "assistant".to_string(),

@@ -1,3 +1,5 @@
+use serde_json::{json, Value};
+
 /// Clean system prompt: remove Claude Code and Kiro IDE injected content
 pub(crate) fn clean_system_prompt(text: &str) -> String {
     let mut result = text.to_string();
@@ -67,5 +69,23 @@ pub(crate) fn join_with_double_newline(left: &str, right: &str) -> String {
         (true, false) => right.to_string(),
         (false, true) => left.to_string(),
         (false, false) => format!("{left}\n\n{right}"),
+    }
+}
+
+pub(crate) fn parse_tool_arguments(arguments: &str, context: &str) -> Value {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() {
+        return json!({});
+    }
+
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                "[网关] 工具参数 JSON 解析失败 ({context}): {error}; len={}",
+                trimmed.len()
+            );
+            json!({ "_raw_arguments": trimmed })
+        }
     }
 }

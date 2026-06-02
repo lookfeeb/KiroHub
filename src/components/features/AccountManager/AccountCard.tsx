@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo } from 'react'
 import { Eye, Copy, Check, Edit2, RefreshCcw, ArrowLeftRight, Trash2, AlertCircle } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/overlays/tooltip'
+import { TooltipIconButton } from '@/components/ui/actions/tooltip-icon-button'
 import { useApp } from '../../../hooks/useApp'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
-import { Switch } from '../../ui/switch'
+import { usePrivacy } from '../../../contexts/usePrivacy'
+import { Switch } from '@/components/ui/forms/switch'
 import { getQuota, getUsed, getSubType, getSubPlan, formatUsage, getAccountDisplayName } from '../../../utils/accountStats'
 import { getAccountStatusMeta, isBannedStatus, isUnavailableStatus } from '../../../utils/accountStatus'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
@@ -39,15 +40,6 @@ interface AccountCardProps {
   onContextMenuOpen: (x: number, y: number) => void;
   index?: number;
 }
-
-const TipButton = ({ tip, children, ...props }: any) => (
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <button {...props}>{children}</button>
-    </TooltipTrigger>
-    <TooltipContent>{tip}</TooltipContent>
-  </Tooltip>
-)
 
 const stop = (e: React.MouseEvent) => e.stopPropagation()
 
@@ -165,7 +157,7 @@ const AccountCard = memo(function AccountCard({
             </span>
             <button
               onClick={(e) => { stop(e); onCopy(getAccountDisplayName(account), account.id) }}
-              className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+              className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors flex-shrink-0 cursor-pointer"
             >
               {copiedId === account.id ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
             </button>
@@ -297,23 +289,23 @@ const AccountCard = memo(function AccountCard({
             {t('accountCard.switch')}
           </button>
           <div className="flex items-center gap-0.5">
-            <TipButton tip={t('accountCard.viewDetails')} onClick={(e: React.MouseEvent) => { stop(e); onEdit(account) }}
-              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+            <TooltipIconButton tooltip={t('accountCard.viewDetails')} onClick={(e: React.MouseEvent<HTMLButtonElement>) => { stop(e); onEdit(account) }}
+              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
               <Eye size={14} />
-            </TipButton>
-            <TipButton tip={t('accountCard.refresh')} disabled={isRefreshing || isRefreshingToken}
-              onClick={(e: React.MouseEvent) => { stop(e); onRefreshAll ? onRefreshAll(account.id) : (onRefresh(account.id), onRefreshToken?.(account.id)) }}
+            </TooltipIconButton>
+            <TooltipIconButton tooltip={t('accountCard.refresh')} disabled={isRefreshing || isRefreshingToken}
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => { stop(e); onRefreshAll ? onRefreshAll(account.id) : (onRefresh(account.id), onRefreshToken?.(account.id)) }}
               className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 cursor-pointer">
               <RefreshCcw size={14} className={(isRefreshing || isRefreshingToken) ? 'animate-spin' : ''} />
-            </TipButton>
-            <TipButton tip={t('accountCard.editRemark')} onClick={(e: React.MouseEvent) => { stop(e); onEditLabel ? onEditLabel(account) : onEdit(account) }}
-              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+            </TooltipIconButton>
+            <TooltipIconButton tooltip={t('accountCard.editRemark')} onClick={(e: React.MouseEvent<HTMLButtonElement>) => { stop(e); onEditLabel ? onEditLabel(account) : onEdit(account) }}
+              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
               <Edit2 size={14} />
-            </TipButton>
-            <TipButton tip={t('accountCard.delete')} onClick={(e: React.MouseEvent) => { stop(e); onDelete(account.id) }}
-              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+            </TooltipIconButton>
+            <TooltipIconButton tooltip={t('accountCard.delete')} onClick={(e: React.MouseEvent<HTMLButtonElement>) => { stop(e); onDelete(account.id) }}
+              className="h-8 w-8 rounded-lg inline-flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors cursor-pointer">
               <Trash2 size={14} />
-            </TipButton>
+            </TooltipIconButton>
           </div>
         </div>
       </div>

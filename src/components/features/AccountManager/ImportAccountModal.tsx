@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Tabs, TabsContent, TabsList } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList } from '@/components/ui/navigation/tabs'
 import { Stack, Group } from '@/components/shared/layout'
 
-import { Progress } from '@/components/ui/progress'
-import { Alert } from '@/components/ui/alert'
+import { Progress } from '@/components/ui/feedback/progress'
+import { Alert } from '@/components/ui/feedback/alert'
 import { Upload, FileJson, AlertCircle, CheckCircle, Loader2, Database, RefreshCw, LogIn } from 'lucide-react'
 import Login from '../Login'
 import { invoke } from '@tauri-apps/api/core'
@@ -156,6 +156,14 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
   const [kiroCliDetecting, setKiroCliDetecting] = useState(false)
   const [kiroCliImporting, setKiroCliImporting] = useState(false)
   const [kiroCliResult, setKiroCliResult] = useState<any>(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -200,6 +208,7 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
     setKiroCliDetecting(true)
     try {
       const defaultPath = await invoke<string>('get_kiro_cli_default_path')
+      if (!mountedRef.current) return
       if (defaultPath) {
         setKiroCliDbPath(defaultPath)
         setKiroCliDetected(true)
@@ -208,9 +217,12 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
       }
     } catch (e) {
       console.error('获取默认路径失败:', e)
+      if (!mountedRef.current) return
       setKiroCliDetected(false)
     } finally {
-      setKiroCliDetecting(false)
+      if (mountedRef.current) {
+        setKiroCliDetecting(false)
+      }
     }
   }
 
@@ -227,12 +239,16 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
     setKiroError(null)
     try {
       const accounts = await invoke<any[]>('read_kiro_accounts')
+      if (!mountedRef.current) return
       setKiroAccounts(accounts)
     } catch (e) {
+      if (!mountedRef.current) return
       setKiroError(String(e))
       setKiroAccounts([])
     } finally {
-      setKiroLoading(false)
+      if (mountedRef.current) {
+        setKiroLoading(false)
+      }
     }
   }
 
@@ -349,8 +365,14 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
     const results = await runConcurrent(
       parseResult.valid,
       importOne,
-      (completed: number) => setImportProgress({ current: completed, total: parseResult.valid.length })
+      (completed: number) => {
+        if (mountedRef.current) {
+          setImportProgress({ current: completed, total: parseResult.valid.length })
+        }
+      }
     )
+
+    if (!mountedRef.current) return
 
     results.forEach(r => {
       if (r.success) {
@@ -424,8 +446,14 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
     const results = await runConcurrent(
       kiroAccounts,
       importOne,
-      (completed: number) => setKiroProgress({ current: completed, total: kiroAccounts.length })
+      (completed: number) => {
+        if (mountedRef.current) {
+          setKiroProgress({ current: completed, total: kiroAccounts.length })
+        }
+      }
     )
+
+    if (!mountedRef.current) return
 
     results.forEach(r => {
       if (r.success) {
@@ -458,6 +486,8 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
         dbPath: kiroCliDbPath
       })
 
+      if (!mountedRef.current) return
+
       if (result.success) {
         setKiroCliResult({
           success: true,
@@ -475,12 +505,15 @@ function ImportAccountModal({ onClose, onSuccess, onNavigate }: ImportAccountMod
         })
       }
     } catch (e) {
+      if (!mountedRef.current) return
       setKiroCliResult({
         success: false,
         error: String(e)
       })
     } finally {
-      setKiroCliImporting(false)
+      if (mountedRef.current) {
+        setKiroCliImporting(false)
+      }
     }
   }
 
@@ -621,8 +654,16 @@ return (
                             const formatted = JSON.stringify([JSON.parse(text)], null, 2)
                             setJsonText(formatted)
                             parseJson(formatted)
+                          } else {
+                            parseJson(jsonText)
                           }
-                        } catch {}
+                        } catch (formatError: any) {
+                          setParseResult({
+                            valid: [],
+                            invalid: [],
+                            errors: [`JSON 格式化失败: ${formatError?.message || String(formatError)}`],
+                          })
+                        }
                       }
                     }}
                   >

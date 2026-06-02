@@ -1,17 +1,19 @@
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { Users, Zap, Shield, TrendingUp, Sparkles, Server, RefreshCw, Terminal, Clock, CreditCard, User, KeyRound, Database, Folder } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react'
+import { Users, Zap, Shield, TrendingUp, Sparkles, Server, RefreshCw, Terminal, Clock, CreditCard, User, KeyRound, Database, Folder, Check } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
 import { useAccount } from '../../../contexts/AccountContext'
-import { usePrivacy } from '../../../contexts/PrivacyContext'
+import { usePrivacy } from '../../../contexts/usePrivacy'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
 import { getSubPlan, getMergedQuota, formatUsage } from '../../../utils/accountStats'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { getAccountStatusMeta } from '../../../utils/accountStatus'
+import { Card, CardContent } from '@/components/ui/data-display/card'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/overlays/tooltip'
+import { TooltipIconButton } from '@/components/ui/actions/tooltip-icon-button'
 
 // 子组件
 import LoadingSkeleton from './LoadingSkeleton'
@@ -37,23 +39,35 @@ function Home({ onNavigate }: HomeProps) {
     stats,
     currentAccount,
     currentQuotaInfo,
-    refresh,
     refreshAccount,
   } = useAccount()
   
   const [refreshingAccount, setRefreshingAccount] = useState(false)
+  const [refreshDone, setRefreshDone] = useState(false)
   const [mcpToolCount, setMcpToolCount] = useState(0)
   const [mcpModalOpen, setMcpModalOpen] = useState(false)
   const [ideInstallInfo, setIdeInstallInfo] = useState<any>(null)
+  const mountedRef = useRef(true)
+  const refreshDoneTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  const handleRefresh = useCallback(() => refresh(), [refresh])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (refreshDoneTimerRef.current) {
+        clearTimeout(refreshDoneTimerRef.current)
+      }
+    }
+  }, [])
 
   // 检测 IDE 安装状态
   useEffect(() => {
     const checkIdeInstallation = async () => {
       try {
         const info = await invoke<any>('check_ide_installation')
-        setIdeInstallInfo(info)
+        if (mountedRef.current) {
+          setIdeInstallInfo(info)
+        }
       } catch (e) {
         console.error('检测 IDE 安装状态失败:', e)
       }
@@ -65,8 +79,10 @@ function Home({ onNavigate }: HomeProps) {
   useEffect(() => {
     const loadMcpToolCount = async () => {
       try {
-        const statsResult = await invoke<any>('get_mcp_tool_stats', { projectDir: null })
-        setMcpToolCount(statsResult.estimatedTools)
+        const statsResult = await invoke<any>('get_mcp_clients_overview')
+        if (mountedRef.current) {
+          setMcpToolCount(statsResult.estimatedTools)
+        }
       } catch (e) {
         // 静默处理
       }
@@ -74,52 +90,129 @@ function Home({ onNavigate }: HomeProps) {
     loadMcpToolCount()
   }, [])
 
-  // 刷新当前账号
-  const handleRefreshCurrentAccount = useCallback(async () => {
-    if (!currentAccount || refreshingAccount) return
-    setRefreshingAccount(true)
-    try {
-      await refreshAccount(currentAccount.id)
-    } catch (e) {
-      showError(t('common.refreshFailed'), String(e))
-    } finally {
-      setRefreshingAccount(false)
-    }
-  }, [currentAccount, refreshingAccount, refreshAccount, showError, t])
-
   // CLI 账号数据
   const [cliSnapshot, setCliSnapshot] = useState<any>(null)
   const [cliLoading, setCliLoading] = useState(false)
   const [cliPath, setCliPath] = useState('')
   const [cliInstalled, setCliInstalled] = useState(false)
 
-  // 加载 CLI 账号
-  useEffect(() => {
-    const loadCliData = async () => {
-      setCliLoading(true)
-      try {
-        const info = await invoke<any>('check_cli_installation')
-        // 只根据可执行文件是否存在判断 CLI 是否安装
-        setCliInstalled(info?.cli_installed || false)
+  const loadCliData = useCallback(async () => {
+    setCliLoading(true)
+    try {
+      const info = await invoke<any>('check_cli_installation')
+      if (!mountedRef.current) return
+      // 只根据可执行文件是否存在判断 CLI 是否安装
+      setCliInstalled(info?.cli_installed || false)
 
-        const path = await invoke<string>('get_kiro_cli_default_path')
-        if (path) {
-          setCliPath(path)
-          try {
-            const snapshot = await invoke<any>('read_cli_db_snapshot', { dbPath: path })
+      const path = await invoke<string>('get_kiro_cli_default_path')
+      if (!mountedRef.current) return
+      setCliPath(path || '')
+      if (path) {
+        try {
+          const snapshot = await invoke<any>('read_cli_db_snapshot', { dbPath: path })
+          if (mountedRef.current) {
             setCliSnapshot(snapshot)
-          } catch {
-            // 数据库存在但读取失败，或未登录
           }
+        } catch {
+          if (mountedRef.current) {
+            setCliSnapshot(null)
+          }
+          // 数据库存在但读取失败，或未登录
         }
-      } catch (e) {
-        // CLI 未安装
-      } finally {
+      } else {
+        if (mountedRef.current) {
+          setCliSnapshot(null)
+        }
+      }
+    } catch (e) {
+      if (mountedRef.current) {
+        setCliInstalled(false)
+        setCliSnapshot(null)
+      }
+    } finally {
+      if (mountedRef.current) {
         setCliLoading(false)
       }
     }
-    loadCliData()
   }, [])
+
+  // 刷新当前账号 + CLI token
+  const handleRefreshCurrentAccount = useCallback(async () => {
+    if (refreshingAccount || cliLoading) return
+    setRefreshingAccount(true)
+    setRefreshDone(false)
+    const errors: string[] = []
+    try {
+      if (currentAccount) {
+        try {
+          await refreshAccount(currentAccount.id)
+        } catch (e) {
+          errors.push(String(e))
+        }
+      }
+
+      if (cliPath) {
+        try {
+          const snapshot = await invoke<any>('refresh_cli_db_token', { dbPath: cliPath })
+          if (mountedRef.current) {
+            setCliSnapshot(snapshot)
+          }
+        } catch (e) {
+          errors.push(String(e))
+          await loadCliData()
+        }
+      } else {
+        await loadCliData()
+      }
+
+      if (errors.length > 0) {
+        if (mountedRef.current) {
+          showError(t('common.refreshFailed'), errors.join('\n'))
+        }
+      } else {
+        if (refreshDoneTimerRef.current) {
+          clearTimeout(refreshDoneTimerRef.current)
+        }
+        if (!mountedRef.current) return
+        setRefreshDone(true)
+        refreshDoneTimerRef.current = setTimeout(() => {
+          if (mountedRef.current) {
+            setRefreshDone(false)
+            refreshDoneTimerRef.current = null
+          }
+        }, 1500)
+      }
+    } finally {
+      if (mountedRef.current) {
+        setRefreshingAccount(false)
+      }
+    }
+  }, [currentAccount, refreshingAccount, cliLoading, cliPath, refreshAccount, loadCliData, showError, t])
+
+  // 加载 CLI 账号
+  useEffect(() => {
+    loadCliData()
+  }, [loadCliData])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    listen('cli-token-updated', () => {
+      if (!disposed) {
+        loadCliData()
+      }
+    }).then(fn => {
+      if (disposed) {
+        fn()
+      } else {
+        unlisten = fn
+      }
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [loadCliData])
 
   // 统计卡片
   const statCards = useMemo(() => [
@@ -137,7 +230,7 @@ function Home({ onNavigate }: HomeProps) {
       onClick: () => setMcpModalOpen(true),
       warning: mcpToolCount > 50
     },
-  ], [accent, stats, mcpToolCount, t, onNavigate])
+  ], [accent, stats, mcpToolCount, t])
 
   if (loading) {
     return <LoadingSkeleton />
@@ -176,22 +269,18 @@ function Home({ onNavigate }: HomeProps) {
                 <span className="text-[10px] text-muted-foreground">IDE / CLI 当前登录态</span>
               </div>
             </div>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleRefreshCurrentAccount}
-                    disabled={refreshingAccount || refreshing}
-                    className={`h-7 w-7 ${refreshingAccount ? 'spinning' : ''}`}
-                  >
-                    <RefreshCw size={13} className="text-muted-foreground" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('common.refresh')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <TooltipIconButton
+              onClick={handleRefreshCurrentAccount}
+              disabled={refreshingAccount || refreshing || cliLoading}
+              tooltip={t('common.refresh')}
+              className="group/button inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50"
+            >
+              {refreshDone ? (
+                <Check size={13} className="text-green-500" />
+              ) : (
+                <RefreshCw size={13} className={`text-muted-foreground ${refreshingAccount ? 'animate-spin' : ''}`} />
+              )}
+            </TooltipIconButton>
           </div>
 
           <CardContent className="p-0">
@@ -234,7 +323,7 @@ function Home({ onNavigate }: HomeProps) {
                     加载中...
                   </div>
                 ) : cliSnapshot ? (
-                  <CliAccountDetail snapshot={cliSnapshot} cliPath={cliPath} />
+                  <CliAccountDetail snapshot={cliSnapshot} cliPath={cliPath} accounts={tokens} maskEmail={maskEmail} />
                 ) : cliInstalled ? (
                   <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm flex-col gap-1.5 py-8">
                     <Terminal size={20} className="text-muted-foreground/50" />
@@ -261,7 +350,30 @@ function Home({ onNavigate }: HomeProps) {
 }
 
 // CLI 账号详情解析
-function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: string }) {
+function parseCliExpiresAt(value: string) {
+  const direct = new Date(value)
+  if (!Number.isNaN(direct.getTime())) {
+    return direct
+  }
+  return new Date(value.replace(/^(\d{4})\/(\d{1,2})\/(\d{1,2}) /, '$1-$2-$3T'))
+}
+
+function formatCliTokenKey(key?: string) {
+  return (key || '').replace(/^(kirocli|codewhisperer):/, '') || 'token'
+}
+
+function statusBadgeClass(tone: 'success' | 'warning' | 'danger') {
+  if (tone === 'success') return 'bg-green-500'
+  if (tone === 'danger') return 'bg-red-500'
+  return 'bg-orange-500'
+}
+
+function CliAccountDetail({ snapshot, cliPath, accounts, maskEmail }: {
+  snapshot: any;
+  cliPath: string;
+  accounts: any[];
+  maskEmail: (s: string) => string;
+}) {
   const entries = snapshot?.token_entries || []
   const deviceReg = snapshot?.device_registration
 
@@ -282,18 +394,30 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
   const isOidc = mainEntry.key?.includes('odic')
   const isSocial = mainEntry.key?.includes('social')
   const authMethod = isSocial ? 'Social' : isOidc ? 'IdC (BuilderId)' : 'Unknown'
+  const matchedAccount = accounts.find(account =>
+    (tokenData.refresh_token && account.refreshToken === tokenData.refresh_token) ||
+    (tokenData.access_token && account.accessToken === tokenData.access_token)
+  )
+  const displayName = matchedAccount?.email
+    ? maskEmail(matchedAccount.email)
+    : matchedAccount?.userId || authMethod
+  const providerName = getProviderDisplayName(matchedAccount?.provider) || authMethod
+  const plan = matchedAccount ? getSubPlan(matchedAccount) : ''
+  const tokenKeyLabel = formatCliTokenKey(mainEntry.key)
 
   // Token 过期判断
   let expiresStr = '-'
   let isExpired = false
   if (tokenData.expires_at) {
-    const expiresDate = new Date(tokenData.expires_at)
+    const expiresDate = parseCliExpiresAt(tokenData.expires_at)
     expiresStr = expiresDate.toLocaleString()
     isExpired = expiresDate.getTime() < Date.now()
   }
 
   // 截断显示
   const truncate = (s: string, len = 16) => s ? (s.length > len ? s.substring(0, len) + '...' : s) : '-'
+  const tokenRegion = tokenData.region || 'us-east-1'
+  const deviceRegion = deviceReg?.region || 'us-east-1'
 
   return (
     <div className="flex-1 flex flex-col gap-2.5">
@@ -305,14 +429,28 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
           </div>
           <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background ${isExpired ? 'bg-red-500' : 'bg-green-500'}`} />
         </div>
-        <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-sm font-semibold text-foreground">{authMethod}</span>
-          <span className="text-[11px] text-muted-foreground font-mono truncate">{mainEntry.key}</span>
-        </div>
+        <div className="flex flex-col min-w-0 flex-1 gap-1">
+            <span className="text-sm font-semibold text-foreground truncate">{displayName}</span>
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-[11px] text-muted-foreground">{providerName}</span>
+              <span className="text-[11px] text-muted-foreground font-mono truncate max-w-[150px]">{tokenKeyLabel}</span>
+            </div>
+          </div>
+        {plan && (
+          <Badge variant="default" className="shrink-0 text-[10px] px-1.5 py-0">
+            {plan}
+          </Badge>
+        )}
         <Badge variant="default" className={`shrink-0 text-[10px] px-1.5 py-0 ${isExpired ? 'bg-red-500' : 'bg-green-500'}`}>
           {isExpired ? '已过期' : '有效'}
         </Badge>
       </div>
+
+      {/* CLI 启动命令 */}
+      <Panel>
+        <PanelTitle icon={Terminal}>CLI 启动命令</PanelTitle>
+        <CliCommandPreview />
+      </Panel>
 
       {/* Token 信息 */}
       <Panel>
@@ -321,17 +459,11 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
           <InfoRow label="Access Token" value={truncate(tokenData.access_token, 20)} mono />
           <InfoRow label="Refresh Token" value={truncate(tokenData.refresh_token, 20)} mono />
           <InfoRow label="过期时间" value={expiresStr} valueClass={isExpired ? 'text-red-500' : 'text-green-500'} />
-          <InfoRow label="Region" value={tokenData.region || 'us-east-1'} mono />
+          <InfoRow label="Region" value={tokenRegion} mono />
           {tokenData.start_url && <InfoRow label="Start URL" value={truncate(tokenData.start_url, 24)} mono />}
           {tokenData.oauth_flow && <InfoRow label="OAuth Flow" value={tokenData.oauth_flow} />}
           {tokenData.scopes && tokenData.scopes.length > 0 && <InfoRow label="Scopes" value={`${tokenData.scopes.length} 个`} />}
         </div>
-      </Panel>
-
-      {/* CLI 启动命令 */}
-      <Panel>
-        <PanelTitle icon={Terminal}>CLI 启动命令</PanelTitle>
-        <CliCommandPreview />
       </Panel>
 
       {/* Device Registration */}
@@ -341,7 +473,7 @@ function CliAccountDetail({ snapshot, cliPath }: { snapshot: any; cliPath: strin
           <div className="flex flex-col gap-1.5">
             <InfoRow label="Client ID" value={truncate(deviceReg.client_id, 20)} mono />
             <InfoRow label="Client Secret" value={truncate(deviceReg.client_secret, 20)} mono />
-            <InfoRow label="Region" value={deviceReg.region || 'us-east-1'} mono />
+            {deviceRegion !== tokenRegion && <InfoRow label="Region" value={deviceRegion} mono />}
           </div>
         </Panel>
       )}
@@ -438,6 +570,9 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
 
   // 超额使用百分比（相对于超额上限）
   const overagePercent = overageCap > 0 ? Math.round((currentOverages / overageCap) * 100) : 0
+  const statusMeta = getAccountStatusMeta(account, t)
+  const statusLabel = statusMeta.key === 'active' ? '有效' : statusMeta.label
+  const statusCls = statusBadgeClass(statusMeta.tone)
 
   return (
     <div className="flex-1 flex flex-col gap-2.5">
@@ -451,7 +586,7 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
           }`}>
             {provider?.[0]?.toUpperCase() || 'K'}
           </div>
-          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 ring-2 ring-background" />
+          <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${statusCls} ring-2 ring-background`} />
         </div>
         <div className="flex flex-col min-w-0 flex-1 gap-1">
           <span className="text-sm font-semibold text-foreground truncate">
@@ -472,6 +607,9 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
             {plan}
           </Badge>
         )}
+        <Badge variant="default" className={`shrink-0 text-[10px] px-1.5 py-0 ${statusCls}`}>
+          {statusLabel}
+        </Badge>
       </div>
 
       {/* 总配额进度 */}
@@ -572,38 +710,6 @@ function CurrentAccountDetail({ account, accent, maskEmail, t }: {
       <div className="mt-auto">
         <PathBar icon={Folder} label="Token 路径" value=".aws/sso/cache/" title="~/.aws/sso/cache/" />
       </div>
-    </div>
-  )
-}
-
-// 配额行
-function QuotaRow({ label, used, limit, percent, color, accent, expiry }: {
-  label: string;
-  used: number;
-  limit: number;
-  percent: number;
-  color: 'blue' | 'purple' | 'amber';
-  accent: any;
-  expiry?: number;
-}) {
-  const colorMap = {
-    blue: { dot: 'bg-blue-500', bar: 'bg-blue-500', text: 'text-blue-600' },
-    purple: { dot: 'bg-purple-500', bar: 'bg-purple-500', text: 'text-purple-600' },
-    amber: { dot: 'bg-amber-500', bar: 'bg-amber-500', text: 'text-amber-600' },
-  }
-  const c = colorMap[color]
-  const expiryStr = expiry ? new Date(expiry * 1000).toLocaleDateString() : null
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className={`w-1.5 h-1.5 rounded-full ${c.dot} shrink-0`} />
-      <span className="text-[11px] text-muted-foreground w-10 shrink-0" title={expiryStr ? `${expiryStr} 到期` : ''}>{label}</span>
-      <div className="flex-1 h-[3px] bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${c.bar} transition-all`} style={{ width: `${Math.min(percent, 100)}%` }} />
-      </div>
-      <span className={`text-[10px] font-mono ${c.text} w-20 text-right shrink-0`}>
-        {used}/{limit}{expiryStr ? ` · ${expiryStr}` : ''}
-      </span>
     </div>
   )
 }

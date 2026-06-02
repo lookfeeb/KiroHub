@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 
@@ -83,19 +83,26 @@ const DEFAULT_SETTINGS: AppSettings = {
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [loading, setLoading] = useState(true)
+  const mountedRef = useRef(true)
 
   // 加载设置
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       const appSettings = await invoke<AppSettings>('get_app_settings')
-      setSettings(appSettings || DEFAULT_SETTINGS)
+      if (mountedRef.current) {
+        setSettings(appSettings || DEFAULT_SETTINGS)
+      }
     } catch (err) {
       console.error('[AppSettings] 加载失败:', err)
-      setSettings(DEFAULT_SETTINGS)
+      if (mountedRef.current) {
+        setSettings(DEFAULT_SETTINGS)
+      }
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
 
   // 更新设置
   const updateSettings = async (updates: Partial<AppSettings>) => {
@@ -114,16 +121,25 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    mountedRef.current = true
     loadSettings()
 
     let unlisten: UnlistenFn | null = null
+    let mounted = true
 
     const setupListener = async () => {
-      unlisten = await listen<AppSettings | null>('app-settings-changed', (event) => {
+      listen<AppSettings | null>('app-settings-changed', (event) => {
+        if (!mounted) return
         if (event.payload) {
           setSettings(event.payload)
         } else {
           loadSettings()
+        }
+      }).then(fn => {
+        if (mounted) {
+          unlisten = fn
+        } else {
+          fn()
         }
       })
     }
@@ -131,9 +147,11 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     setupListener()
 
     return () => {
+      mounted = false
+      mountedRef.current = false
       if (unlisten) unlisten()
     }
-  }, [])
+  }, [loadSettings])
 
   return (
     <AppSettingsContext.Provider value={{ settings, loading, updateSettings, reload: loadSettings }}>

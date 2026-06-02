@@ -1,7 +1,7 @@
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Card, CardContent, CardHeader } from '@/components/ui/data-display/card'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/overlays/tooltip'
+import { TooltipIconButton } from '@/components/ui/actions/tooltip-icon-button'
 import { RefreshCw, Users, Clock } from 'lucide-react'
 import { useApp } from '../../../hooks/useApp'
 import { useMemo } from 'react'
@@ -32,24 +32,14 @@ function CurrentAccountCard({
     <Card className="card-glow animate-scale-in delay-300">
       <CardHeader className={`flex flex-row items-center justify-between space-y-0 pb-3 border-b border-border`}>
         <span className={`font-semibold text-foreground`}>{t('home.currentAccount')}</span>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                className={refreshing ? 'spinning' : ''}
-              >
-                <RefreshCw size={16} className={"text-muted-foreground"} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('common.refresh')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <TooltipIconButton
+          onClick={handleRefresh}
+          disabled={refreshing}
+          tooltip={t('common.refresh')}
+          className={`group/button inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 ${refreshing ? 'spinning' : ''}`}
+        >
+          <RefreshCw size={16} className={"text-muted-foreground"} />
+        </TooltipIconButton>
       </CardHeader>
 
       <CardContent className="pt-6">

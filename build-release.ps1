@@ -147,6 +147,11 @@ if (-not (Test-Path -LiteralPath $passwordPath)) {
 
 Push-Location $repoRoot
 try {
+  node .\scripts\sync-version.mjs
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+
   $package = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
   $expectedVersion = [string]$package.version
 

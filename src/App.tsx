@@ -69,29 +69,41 @@ function App() {
     let unlistenNetworkError: UnlistenFn | null = null
     let mounted = true
 
+    const keepUnlisten = (setter: (fn: UnlistenFn) => void) => (fn: UnlistenFn) => {
+      if (mounted) {
+        setter(fn)
+      } else {
+        fn()
+      }
+    }
+
     const setupListeners = async () => {
-      unlisten = await listen('login-success', () => {
+      listen('login-success', () => {
         if (!mounted) return
         checkAuth()
         setActiveMenu('accounts')
-      })
+      }).then(keepUnlisten(fn => { unlisten = fn }))
+        .catch(err => console.error('注册 login-success 监听失败:', err))
       
       // 后端自动运行，前端无需监听 settings-changed 和 app-settings-changed
       
-      unlistenBanned = await listen<{ email: string }>('account-banned', (event) => {
+      listen<{ email: string }>('account-banned', (event) => {
         if (!mounted) return
         showError('账号已封禁', `账号 ${event.payload.email} 已被封禁，无法继续使用`)
-      })
+      }).then(keepUnlisten(fn => { unlistenBanned = fn }))
+        .catch(err => console.error('注册 account-banned 监听失败:', err))
 
-      unlistenTokenInvalid = await listen<{ email: string }>('account-token-invalid', (event) => {
+      listen<{ email: string }>('account-token-invalid', (event) => {
         if (!mounted) return
         showInfo('Token 已失效', `账号 ${event.payload.email} 的 Token 已失效，请重新登录`)
-      })
+      }).then(keepUnlisten(fn => { unlistenTokenInvalid = fn }))
+        .catch(err => console.error('注册 account-token-invalid 监听失败:', err))
 
-      unlistenNetworkError = await listen<{ count: number, total: number }>('sync-network-error', (event) => {
+      listen<{ count: number, total: number }>('sync-network-error', (event) => {
         if (!mounted) return
         showError('网络错误', `${event.payload.count}/${event.payload.total} 个账号同步失败，请检查网络连接`)
-      })
+      }).then(keepUnlisten(fn => { unlistenNetworkError = fn }))
+        .catch(err => console.error('注册 sync-network-error 监听失败:', err))
     }
 
     setupListeners()

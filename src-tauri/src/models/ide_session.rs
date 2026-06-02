@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// IDE Session 完整数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +37,14 @@ pub struct SessionSummary {
     pub modified_at: Option<i64>,
     /// 来源：ide | cli
     pub source: String,
+}
+
+/// 会话树：一次性返回工作区和其下会话，避免前端启动时 N 次 IPC 拉取。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTree {
+    pub workspaces: Vec<String>,
+    pub sessions_by_workspace: HashMap<String, Vec<SessionSummary>>,
 }
 
 /// 对话历史项

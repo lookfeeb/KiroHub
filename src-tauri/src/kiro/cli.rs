@@ -369,6 +369,43 @@ pub fn read_cli_db_snapshot(db_path: &str) -> Result<KiroCliDbSnapshot, String> 
     })
 }
 
+/// 更新当前 CLI token 条目，保留原 JSON 里的附加字段。
+pub fn update_cli_token_entry(
+    db_path: &str,
+    key: &str,
+    old_value_json: &str,
+    access_token: &str,
+    refresh_token: Option<&str>,
+    expires_in: i64,
+    profile_arn: Option<&str>,
+) -> Result<(), String> {
+    if !Path::new(db_path).exists() {
+        return Err(format!("数据库文件不存在: {db_path}"));
+    }
+
+    let mut value: serde_json::Value = serde_json::from_str(old_value_json)
+        .map_err(|e| format!("解析原 token JSON 失败: {e}"))?;
+    value["access_token"] = serde_json::json!(access_token);
+    if let Some(refresh_token) = refresh_token {
+        value["refresh_token"] = serde_json::json!(refresh_token);
+    }
+    if let Some(profile_arn) = profile_arn {
+        value["profile_arn"] = serde_json::json!(profile_arn);
+    }
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
+    value["expires_at"] = serde_json::json!(expires_at.to_rfc3339());
+
+    let next_value = serde_json::to_string(&value)
+        .map_err(|e| format!("序列化 token JSON 失败: {e}"))?;
+
+    let conn = Connection::open(db_path)
+        .map_err(|e| format!("无法打开数据库: {e}"))?;
+    write_kv_value(&conn, key, &next_value)
+        .map_err(|e| format!("写入 token 失败: {e}"))?;
+
+    Ok(())
+}
+
 /// 解析 Token JSON 数据
 fn parse_token_data(json_str: &str) -> Result<TokenData, String> {
     let data: serde_json::Value = serde_json::from_str(json_str)
@@ -557,4 +594,3 @@ fn get_cli_database_paths() -> Vec<std::path::PathBuf> {
 
     paths
 }
-

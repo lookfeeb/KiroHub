@@ -456,8 +456,11 @@ impl AccountStore {
                 let count = legacy.len();
                 store.accounts = legacy;
                 if store.try_save_to_file().is_ok() {
-                    Self::backup_legacy_json();
-                    eprintln!("[AccountStore] 已从 accounts.json 迁移 {count} 个账号到 SQLite");
+                    if let Err(error) = Self::backup_legacy_json() {
+                        eprintln!("[AccountStore] 备份旧 accounts.json 失败: {error}");
+                    } else {
+                        eprintln!("[AccountStore] 已从 accounts.json 迁移 {count} 个账号到 SQLite");
+                    }
                 }
             }
         }
@@ -482,21 +485,37 @@ impl AccountStore {
     }
 
     fn load_legacy_json() -> Option<Vec<Account>> {
-        let content = std::fs::read_to_string(Self::legacy_json_path()).ok()?;
+        let path = Self::legacy_json_path();
+        if !path.exists() {
+            return None;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                eprintln!("[AccountStore] 读取旧 accounts.json 失败: {error}");
+                return None;
+            }
+        };
         match serde_json::from_str::<Vec<Account>>(&content) {
             Ok(accounts) if !accounts.is_empty() => Some(accounts),
-            _ => None,
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("[AccountStore] 解析旧 accounts.json 失败: {error}");
+                None
+            }
         }
     }
 
-    fn backup_legacy_json() {
+    fn backup_legacy_json() -> Result<(), String> {
         let path = Self::legacy_json_path();
-        let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+        std::fs::rename(&path, path.with_extension("json.bak"))
+            .map_err(|e| format!("{} -> {}: {e}", path.display(), path.with_extension("json.bak").display()))
     }
 
     /// 异步加载：把同步的 SQLite 查询放到阻塞线程池，避免阻塞 async 运行时。
     fn load_from_db() -> Vec<Account> {
-        let conn = match crate::db::pool().get() {
+        let conn = match crate::db::connection() {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[AccountStore] 获取数据库连接失败: {e}");
@@ -535,9 +554,7 @@ impl AccountStore {
 
     /// 将内存中的账号整体写回 SQLite（事务内清空后批量插入，保证原子性）。
     pub fn try_save_to_file(&self) -> Result<(), String> {
-        let mut conn = crate::db::pool()
-            .get()
-            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let mut conn = crate::db::connection()?;
         let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
         tx.execute("DELETE FROM accounts", [])
             .map_err(|e| format!("清空账号表失败: {e}"))?;
@@ -591,9 +608,7 @@ impl AccountStore {
     /// 仅更新单个账号行（UPSERT），避免整表覆盖造成的跨实例 last-writer-wins。
     /// 用于网关等高频单账号写入路径（保留其它账号行不受影响）。
     pub fn update_one(&self, account: &Account) -> Result<(), String> {
-        let conn = crate::db::pool()
-            .get()
-            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let conn = crate::db::connection()?;
         let data = serde_json::to_string(account).map_err(|e| format!("序列化账号失败: {e}"))?;
         conn.execute(
             "INSERT INTO accounts(id,email,user_id,label,status,group_id,enabled,added_at,position,data) \
@@ -699,7 +714,10 @@ impl AccountStore {
 
     #[allow(dead_code)]
     pub fn export_to_json(&self) -> String {
-        serde_json::to_string_pretty(&self.accounts).unwrap_or_default()
+        serde_json::to_string_pretty(&self.accounts).unwrap_or_else(|error| {
+            eprintln!("[AccountStore] 导出账号 JSON 序列化失败: {error}");
+            "[]".to_string()
+        })
     }
 
     /// 获取可用账号列表（用于自动换号）
@@ -748,8 +766,11 @@ impl GroupTagStore {
             if let Some(legacy) = Self::load_legacy_json() {
                 let store = Self { data: legacy };
                 if store.try_save_to_file().is_ok() {
-                    Self::backup_legacy_json();
-                    eprintln!("[GroupTagStore] 已从 groups-tags.json 迁移到 SQLite");
+                    if let Err(error) = Self::backup_legacy_json() {
+                        eprintln!("[GroupTagStore] 备份旧 groups-tags.json 失败: {error}");
+                    } else {
+                        eprintln!("[GroupTagStore] 已从 groups-tags.json 迁移到 SQLite");
+                    }
                 }
                 return store;
             }
@@ -769,8 +790,25 @@ impl GroupTagStore {
     }
 
     fn load_legacy_json() -> Option<GroupTagData> {
-        let content = std::fs::read_to_string(Self::legacy_json_path()).ok()?;
-        let data: GroupTagData = serde_json::from_str(&content).ok()?;
+        let path = Self::legacy_json_path();
+        if !path.exists() {
+            return None;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                eprintln!("[GroupTagStore] 读取旧 groups-tags.json 失败: {error}");
+                return None;
+            }
+        };
+        let data: GroupTagData = match serde_json::from_str(&content) {
+            Ok(data) => data,
+            Err(error) => {
+                eprintln!("[GroupTagStore] 解析旧 groups-tags.json 失败: {error}");
+                return None;
+            }
+        };
         if data.groups.is_empty() && data.tags.is_empty() {
             None
         } else {
@@ -778,13 +816,14 @@ impl GroupTagStore {
         }
     }
 
-    fn backup_legacy_json() {
+    fn backup_legacy_json() -> Result<(), String> {
         let path = Self::legacy_json_path();
-        let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+        std::fs::rename(&path, path.with_extension("json.bak"))
+            .map_err(|e| format!("{} -> {}: {e}", path.display(), path.with_extension("json.bak").display()))
     }
 
     fn load_from_db() -> GroupTagData {
-        let conn = match crate::db::pool().get() {
+        let conn = match crate::db::connection() {
             Ok(c) => c,
             Err(_) => return GroupTagData::default(),
         };
@@ -821,9 +860,7 @@ impl GroupTagStore {
 
     /// 将分组与标签整体写回 SQLite（事务内清空后批量插入）。
     pub fn try_save_to_file(&self) -> Result<(), String> {
-        let mut conn = crate::db::pool()
-            .get()
-            .map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let mut conn = crate::db::connection()?;
         let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
         tx.execute("DELETE FROM account_groups", [])
             .map_err(|e| format!("清空分组失败: {e}"))?;

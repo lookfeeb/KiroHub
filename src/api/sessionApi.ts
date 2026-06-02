@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { IdeSession, SessionSummary } from '@/types/session'
+import { IdeSession, SessionSummary, SessionTree } from '@/types/session'
 
 export const sessionApi = {
   // 列出所有 workspace
@@ -10,6 +10,11 @@ export const sessionApi = {
   // 列出指定 workspace 的 sessions
   async listSessions(workspaceHash: string): Promise<SessionSummary[]> {
     return invoke('list_sessions', { workspaceHash })
+  },
+
+  // 一次性返回 workspace + sessions，避免启动时 N 次 IPC
+  async listSessionTree(): Promise<SessionTree> {
+    return invoke('list_session_tree')
   },
 
   // 加载完整 session

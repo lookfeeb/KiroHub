@@ -159,7 +159,10 @@ pub(crate) fn build_anthropic_content_blocks(
             thinking: None,
             id: Some(id.clone()),
             name: Some(name.clone()),
-            input: Some(serde_json::from_str(arguments).unwrap_or_else(|_| json!({}))),
+            input: Some(crate::gateway::converter::parse_tool_arguments(
+                arguments,
+                "proxy.response_build",
+            )),
             tool_use_id: None,
             content: None,
             citations: None,
@@ -397,4 +400,3 @@ pub(crate) fn build_stream_responses_reasoning_done_event(
         "text": text
     })
 }
-

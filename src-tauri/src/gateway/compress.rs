@@ -313,7 +313,10 @@ async fn generate_summary(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| format!("读取摘要错误响应失败: {e}"))?;
         return Err(format!("摘要请求失败 ({}): {}", status, body));
     }
 

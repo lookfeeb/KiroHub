@@ -16,6 +16,7 @@ pub(crate) async fn process_nonstream_response(
     messages_hash: String,
     cache_message_count: usize,
     cache_total_chars: usize,
+    cache_enabled_for_request: bool,
 ) -> Response {
     // 非流式响应也是 EventStream 格式，需要解码
     let raw_bytes = match upstream_resp.bytes().await {
@@ -131,7 +132,10 @@ pub(crate) async fn process_nonstream_response(
     log::info!("[非流式响应] 使用本地 token 估算");
 
     // 估算输入 tokens（从请求消息中）
-    let request_text = serde_json::to_string(&request.messages).unwrap_or_default();
+    let request_text = serde_json::to_string(&request.messages).unwrap_or_else(|error| {
+        log::warn!("[非流式响应] 请求消息序列化失败，token 估算退回空输入: {error}");
+        String::new()
+    });
     aggregated.input_tokens = crate::gateway::token_estimator::estimate_tokens(&request_text, &request.model);
 
     // 估算输出 tokens（从响应文本中）
@@ -227,24 +231,30 @@ pub(crate) async fn process_nonstream_response(
         .await;
     }
     // ===== 响应缓存：写入（仅非流式成功响应） =====
-    if state.config.response_cache_enabled {
-        let response_json = serde_json::to_string(&response).unwrap_or_default();
-        let mut cache_guard = state.response_cache.lock().await;
-        cache_guard.put(
-            &cache_session_id,
-            &messages_hash,
-            response_json,
-            aggregated.input_tokens,
-            aggregated.output_tokens,
-            cache_message_count,
-            cache_total_chars,
-        );
-        drop(cache_guard);
-        log::debug!(
-            "[响应缓存] 已写入: session={}, hash={}",
-            &cache_session_id[..cache_session_id.len().min(16)],
-            &messages_hash[..16]
-        );
+    if cache_enabled_for_request {
+        match serde_json::to_string(&response) {
+            Ok(response_json) => {
+                let mut cache_guard = state.response_cache.lock().await;
+                cache_guard.put(
+                    &cache_session_id,
+                    &messages_hash,
+                    response_json,
+                    aggregated.input_tokens,
+                    aggregated.output_tokens,
+                    cache_message_count,
+                    cache_total_chars,
+                );
+                drop(cache_guard);
+                log::debug!(
+                    "[响应缓存] 已写入: session={}, hash={}",
+                    &cache_session_id[..cache_session_id.len().min(16)],
+                    &messages_hash[..16]
+                );
+            }
+            Err(error) => {
+                log::warn!("[响应缓存] 响应序列化失败，跳过本次缓存写入: {error}");
+            }
+        }
     }
 
     write_request_log(

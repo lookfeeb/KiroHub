@@ -36,7 +36,8 @@ __pycache__/
 .env
 
 # Downloaded files
-scripts/
+scripts/downloads/
+scripts/tmp/
 src-tauri/clippy_warnings.txt
 1.json
 

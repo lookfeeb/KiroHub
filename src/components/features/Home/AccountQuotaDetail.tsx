@@ -2,11 +2,11 @@ import { RefreshCw } from 'lucide-react'
 import { getAccountDisplayName } from '../../../utils/accountStats'
 
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
-import { Card, CardHeader, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Card, CardHeader, CardContent } from '@/components/ui/data-display/card'
+import { Badge } from '@/components/ui/data-display/badge'
+import { Progress } from '@/components/ui/feedback/progress'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/overlays/tooltip'
+import { TooltipIconButton } from '@/components/ui/actions/tooltip-icon-button'
 import { Stack, Group, Text } from '@/components/shared/layout'
 import { getThemeAccent } from '../KiroConfig/themeAccent'
 import { useMemo } from 'react'
@@ -158,20 +158,14 @@ function AccountHeader({ currentAccount, userInfo, subInfo, daysUntilReset, refr
           </span>
         </div>
       </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            onClick={handleRefreshCurrentAccount}
-            disabled={refreshingAccount}
-            variant="ghost"
-            size="icon"
-            className={refreshingAccount ? 'spinning' : ''}
-          >
-            <RefreshCw size={16} className={"text-muted-foreground"} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('home.refreshAccount')}</TooltipContent>
-      </Tooltip>
+      <TooltipIconButton
+        onClick={handleRefreshCurrentAccount}
+        disabled={refreshingAccount}
+        tooltip={t('home.refreshAccount')}
+        className={`group/button inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 ${refreshingAccount ? 'spinning' : ''}`}
+      >
+        <RefreshCw size={16} className={"text-muted-foreground"} />
+      </TooltipIconButton>
     </div>
   )
 }

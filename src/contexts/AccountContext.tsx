@@ -54,6 +54,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   // 用 ref 存储定时器，以便在组件卸载时清理
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const mountedRef = useRef(true)
 
   // 加载数据
   const loadData = useCallback(async () => {
@@ -61,12 +62,18 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setError(null)
       const [accountsData, localData] = await Promise.all([
         invoke<Account[]>('get_accounts'),
-        invoke<LocalToken>('get_kiro_local_token').catch(() => null)
+        invoke<LocalToken>('get_kiro_local_token').catch((err) => {
+          console.error('读取 Kiro 本地 token 失败:', err)
+          return null
+        })
       ])
+      if (!mountedRef.current) return
       setAccounts(accountsData || [])
       setLocalToken(localData as LocalToken | null)
     } catch (e) {
-      setError(e)
+      if (mountedRef.current) {
+        setError(e)
+      }
     }
   }, [])
 
@@ -75,19 +82,30 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     let unlistenLogin: UnlistenFn | null = null
     let unlistenAccounts: UnlistenFn | null = null
     let mounted = true
+    mountedRef.current = true
+
+    const keepUnlisten = (setter: (fn: UnlistenFn) => void) => (fn: UnlistenFn) => {
+      if (mounted) {
+        setter(fn)
+      } else {
+        fn()
+      }
+    }
 
     const setup = async () => {
       // 监听登录成功事件，刷新数据
-      unlistenLogin = await listen('login-success', () => {
+      listen('login-success', () => {
         if (!mounted) return
         loadData()
-      })
+      }).then(keepUnlisten(fn => { unlistenLogin = fn }))
+        .catch(err => console.error('注册 login-success 监听失败:', err))
 
       // 监听账号数据变化
-      unlistenAccounts = await listen('accounts-updated', () => {
+      listen('accounts-updated', () => {
         if (!mounted) return
         loadData()
-      })
+      }).then(keepUnlisten(fn => { unlistenAccounts = fn }))
+        .catch(err => console.error('注册 accounts-updated 监听失败:', err))
     }
 
     loadData().finally(() => {
@@ -97,6 +115,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false
+      mountedRef.current = false
       if (unlistenLogin) unlistenLogin()
       if (unlistenAccounts) unlistenAccounts()
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
@@ -105,16 +124,22 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   // 刷新所有数据
   const refresh = useCallback(async () => {
+    if (!mountedRef.current) return
     setRefreshing(true)
     try {
       await loadData()
     } finally {
+      if (!mountedRef.current) return
       // 清除之前的定时器
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current)
       }
       // 设置新的定时器
-      refreshTimerRef.current = setTimeout(() => setRefreshing(false), 300)
+      refreshTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          setRefreshing(false)
+        }
+      }, 300)
     }
   }, [loadData])
 
@@ -126,9 +151,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         console.warn(`[账号同步警告] ${result.warning}`)
       }
     } catch (e) {
-      // 错误处理
+      console.error('刷新账号失败:', e)
     }
-    await loadData()
+    if (mountedRef.current) {
+      await loadData()
+    }
   }, [loadData])
 
   // 缓存统计数据

@@ -1,23 +1,25 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-
-interface PrivacyContextValue {
-    privacyMode: boolean;
-    setPrivacyMode: (enabled: boolean) => Promise<void>;
-    maskEmail: (email: string) => string;
-    maskNickname: (name: string) => string;
-}
-
-const PrivacyContext = createContext<PrivacyContextValue | null>(null)
+import { PrivacyContext } from './privacyContextValue'
 
 export function PrivacyProvider({ children }: { children: ReactNode }) {
   const [privacyMode, setPrivacyModeState] = useState(true) // 默认开启隐私模式
 
   // 从后端加载设置
   useEffect(() => {
+    let cancelled = false
+
     invoke<any>('get_app_settings').then(settings => {
-      setPrivacyModeState(settings?.privacyMode ?? true) // 默认 true
-    }).catch(() => {})
+      if (!cancelled) {
+        setPrivacyModeState(settings?.privacyMode ?? true) // 默认 true
+      }
+    }).catch((err) => {
+      console.error('加载隐私设置失败:', err)
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // 保存设置到后端
@@ -69,10 +71,4 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     maskNickname}), [privacyMode, maskEmail, maskNickname])
 
   return <PrivacyContext.Provider value={value}>{children}</PrivacyContext.Provider>
-}
-
-export function usePrivacy() {
-  const context = useContext(PrivacyContext)
-  if (!context) throw new Error('usePrivacy must be used within PrivacyProvider')
-  return context
 }

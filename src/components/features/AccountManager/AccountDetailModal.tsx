@@ -11,7 +11,7 @@ import {
   DialogRoot,
   DialogContent,
   DialogBody} from '../../shared/dialog'
-import { Switch } from '../../ui/switch'
+import { Switch } from '@/components/ui/forms/switch'
 import { Account } from '../../../types/account'
 import ProviderBadge from '../../shared/ProviderBadge'
 import React from 'react'
@@ -119,9 +119,11 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelsExpanded, setModelsExpanded] = useState(false)
+  const mountedRef = useRef(true)
 
   // 获取可用模型
   const fetchModels = async (forceRefresh = false) => {
+    if (!mountedRef.current) return
     setModelsLoading(true)
     setModelsError(null)
     try {
@@ -133,18 +135,25 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
       console.log('[AccountDetailModal] Models response:', response)
       const modelsList = Array.isArray(response?.availableModels) ? response.availableModels : []
       console.log('[AccountDetailModal] Models list:', modelsList.length, 'models')
+      if (!mountedRef.current) return
       setModels(modelsList)
     } catch (e) {
       console.error('[AccountDetailModal] Failed to fetch models:', e)
-      setModelsError(String(e))
+      if (mountedRef.current) {
+        setModelsError(String(e))
+      }
     } finally {
-      setModelsLoading(false)
+      if (mountedRef.current) {
+        setModelsLoading(false)
+      }
     }
   }
 
   // 清理timer
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       if (copiedTimerRef.current) {
         clearTimeout(copiedTimerRef.current)
       }
@@ -172,6 +181,7 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
     setRefreshing(true)
     try {
       const result = await invoke<{ account: Account, warning?: string }>('sync_account', { id: account.id })
+      if (!mountedRef.current) return
       const updated = result.account
       setCurrentAccount(updated)
       
@@ -186,6 +196,7 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
       const used = updated.usageData?.usageBreakdownList?.[0]?.currentUsage ?? 0
       setForm(prev => ({ ...prev, quota, used, status: updated.status }))
     } catch (e) {
+      if (!mountedRef.current) return
       const errorMsg = String(e)
       let status = '刷新失败'
       if (errorMsg.includes('BANNED')) {
@@ -196,17 +207,24 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
       setForm(prev => ({ ...prev, status }))
       await showError(t('detail.refreshFailed'), errorMsg)
     } finally {
-      setRefreshing(false)
+      if (mountedRef.current) {
+        setRefreshing(false)
+      }
     }
   }
 
   const handleCopy = (text: string, field: string) => {
     navigator.clipboard.writeText(text).catch(e => console.error('Copy failed:', e))
+    if (!mountedRef.current) return
     setCopied(field)
     if (copiedTimerRef.current) {
       clearTimeout(copiedTimerRef.current)
     }
-    copiedTimerRef.current = setTimeout(() => setCopied(null), 1500)
+    copiedTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setCopied(null)
+      }
+    }, 1500)
   }
 
   // 从 usageData 读取免费试用和奖励信息

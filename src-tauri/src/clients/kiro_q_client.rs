@@ -34,7 +34,10 @@ fn with_kiro_q_headers(req: RequestBuilder, access_token: &str, machine_id: &str
 /// - 其他保留原始 HTTP 状态码 + body 摘要
 async fn classify_kiro_q_error(api: &str, resp: reqwest::Response) -> String {
     let status_code = resp.status().as_u16();
-    let body = resp.text().await.unwrap_or_default();
+    let body = match resp.text().await {
+        Ok(body) => body,
+        Err(error) => return format!("{api} failed - HTTP {status_code}; 读取响应失败: {error}"),
+    };
 
     if status_code == 401 {
         return format!("AUTH_ERROR: {api} 401: {body}");

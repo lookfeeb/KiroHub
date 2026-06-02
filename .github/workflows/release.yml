@@ -37,6 +37,10 @@ jobs:
         shell: bash
         run: npm install
 
+      - name: Sync version
+        shell: bash
+        run: npm run sync:version
+
       - name: Generate Release Notes
         id: release_notes
         shell: bash

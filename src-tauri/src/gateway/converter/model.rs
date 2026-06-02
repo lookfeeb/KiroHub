@@ -240,9 +240,10 @@ pub fn get_available_models() -> Vec<ModelInfo> {
         // Claude 4.7 系列（目前仅 Opus 4.7）
         "claude-opus-4.7",
         "claude-opus-4.7-thinking",
-        // "claude-sonnet-4.7",        // TODO: 待 Kiro API 支持后启用
+        // Kiro API 暂未返回 Sonnet/Haiku 4.7，等上游支持后再加入。
+        // "claude-sonnet-4.7",
         // "claude-sonnet-4.7-thinking",
-        // "claude-haiku-4.7",         // TODO: 待 Kiro API 支持后启用
+        // "claude-haiku-4.7",
         // "claude-haiku-4.7-thinking",
         // Claude 4.6 系列（Opus 和 Sonnet）
         "claude-opus-4.6",

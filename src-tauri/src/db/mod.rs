@@ -6,7 +6,7 @@
 
 pub mod migrations;
 
-use r2d2::Pool;
+use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -58,7 +58,7 @@ pub fn init() -> Result<DbPool, String> {
 static POOL: OnceLock<DbPool> = OnceLock::new();
 
 /// 启动期显式初始化全局连接池（可提前暴露错误）；幂等。
-/// 即使未调用或失败，`pool()` 仍会按默认路径懒初始化。
+/// 即使未调用，`pool()` 仍会按默认路径懒初始化。
 pub fn init_global() -> Result<(), String> {
     if POOL.get().is_some() {
         return Ok(());
@@ -69,8 +69,20 @@ pub fn init_global() -> Result<(), String> {
 }
 
 /// 获取全局连接池：若未显式初始化则按默认路径懒初始化（生产/测试通用）。
-pub fn pool() -> &'static DbPool {
-    POOL.get_or_init(|| init().expect("数据库连接池初始化失败"))
+pub fn pool() -> Result<&'static DbPool, String> {
+    if POOL.get().is_none() {
+        let p = init()?;
+        let _ = POOL.set(p);
+    }
+
+    POOL.get()
+        .ok_or_else(|| "数据库连接池初始化失败".to_string())
+}
+
+pub fn connection() -> Result<PooledConnection<SqliteConnectionManager>, String> {
+    pool()?
+        .get()
+        .map_err(|e| format!("获取数据库连接失败: {e}"))
 }
 
 /// 生成数据库的一致性单文件快照（`VACUUM INTO`）。
@@ -83,7 +95,7 @@ pub fn backup_to(dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建备份目录失败: {e}"))?;
     }
-    let conn = pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = connection()?;
     // VACUUM INTO 不支持参数绑定，目标路径以字符串字面量拼接（转义单引号防注入）
     let dest_lit = dest.to_string_lossy().replace('\'', "''");
     conn.execute_batch(&format!("VACUUM INTO '{dest_lit}'"))
@@ -93,7 +105,7 @@ pub fn backup_to(dest: &Path) -> Result<(), String> {
 /// 读取 KV 表中某 key 的值（table 为内部常量，无注入风险）。
 pub fn kv_get(table: &str, key: &str) -> Result<Option<String>, String> {
     use rusqlite::OptionalExtension;
-    let conn = pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = connection()?;
     conn.query_row(
         &format!("SELECT value FROM {table} WHERE key=?1"),
         [key],
@@ -105,7 +117,7 @@ pub fn kv_get(table: &str, key: &str) -> Result<Option<String>, String> {
 
 /// 写入 KV 表（按 key upsert）。
 pub fn kv_set(table: &str, key: &str, value: &str) -> Result<(), String> {
-    let conn = pool().get().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+    let conn = connection()?;
     conn.execute(
         &format!(
             "INSERT INTO {table}(key,value) VALUES(?1,?2) \
