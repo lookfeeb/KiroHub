@@ -1,6 +1,6 @@
 [package]
 name = "kiro-hub"
-version = "0.0.4"
+version = "0.0.5"
 description = "KiroHub - 管理 Kiro IDE、Cli 账号，支持多账号切换和配额监控"
 authors = ["lookfeeb"]
 license = "CC-BY-NC-SA-4.0"
