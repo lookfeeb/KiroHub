@@ -108,6 +108,19 @@ pub fn normalized_credential_key(endpoint: &str) -> String {
     endpoint.trim_end_matches('/').to_ascii_lowercase()
 }
 
+pub fn mcp_oauth_failure_needs_reauth(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "invalid_grant",
+        "grant not found",
+        "refresh token expired",
+        "invalid refresh token",
+        "revoked",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
 pub fn encode_credential_key(credential_key: &str) -> String {
     urlencoding::encode(credential_key).into_owned()
 }
@@ -175,7 +188,9 @@ pub fn unbind_mcp_oauth_server(
     server_name: &str,
 ) -> Result<Option<(String, McpOAuthCred, bool)>, String> {
     let mut store = get_mcp_oauth_store()?;
-    let Some(credential_key) = store.server_bindings.remove(&binding_key(client, server_name))
+    let Some(credential_key) = store
+        .server_bindings
+        .remove(&binding_key(client, server_name))
     else {
         save_mcp_oauth_store(&store)?;
         return Ok(None);

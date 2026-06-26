@@ -158,11 +158,23 @@ export function useMcpTools({ activeClient, showConfirm }: UseMcpToolsOptions) {
       setAuth(prev => ({ ...prev, [key]: st }))
       await load()
     } catch (e) {
-      console.error('授权失败', e)
+      if (!String(e).includes('授权已取消')) {
+        console.error('授权失败', e)
+      }
     } finally {
       setBusy(key, false)
     }
   }, [load, setBusy])
+
+  const cancelAuthorize = useCallback(async (server: McpServerItem) => {
+    const key = authKey(server.client, server.name)
+    try {
+      await invoke('mcp_oauth_cancel_authorize_for_client', { client: server.client, serverName: server.name })
+    } catch (e) {
+      console.error('取消授权失败', e)
+      setBusy(key, false)
+    }
+  }, [setBusy])
 
   const refreshOne = useCallback(async (server: McpServerItem) => {
     const key = authKey(server.client, server.name)
@@ -269,6 +281,7 @@ export function useMcpTools({ activeClient, showConfirm }: UseMcpToolsOptions) {
     refreshAll,
     reloadAuthForCurrentServers,
     authorize,
+    cancelAuthorize,
     refreshOne,
     revoke,
     deleteServer,

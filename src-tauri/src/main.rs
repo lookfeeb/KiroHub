@@ -94,9 +94,9 @@ use commands::mcp_cmd::{
     save_mcp_server, toggle_mcp_server, toggle_mcp_server_by_client,
 };
 use commands::mcp_oauth_cmd::{
-    mcp_oauth_authorize, mcp_oauth_authorize_for_client, mcp_oauth_refresh_for_client,
-    mcp_oauth_revoke, mcp_oauth_revoke_for_client, mcp_oauth_status,
-    mcp_oauth_status_for_client,
+    mcp_oauth_authorize, mcp_oauth_authorize_for_client, mcp_oauth_cancel_authorize,
+    mcp_oauth_cancel_authorize_for_client, mcp_oauth_refresh_for_client, mcp_oauth_revoke,
+    mcp_oauth_revoke_for_client, mcp_oauth_status, mcp_oauth_status_for_client,
 };
 
 use commands::session_manager::{
@@ -528,9 +528,11 @@ fn main() {
             delete_mcp_server_by_client,
             copy_mcp_server_to_client,
             mcp_oauth_authorize,
+            mcp_oauth_cancel_authorize,
             mcp_oauth_status,
             mcp_oauth_revoke,
             mcp_oauth_authorize_for_client,
+            mcp_oauth_cancel_authorize_for_client,
             mcp_oauth_status_for_client,
             mcp_oauth_refresh_for_client,
             mcp_oauth_revoke_for_client,

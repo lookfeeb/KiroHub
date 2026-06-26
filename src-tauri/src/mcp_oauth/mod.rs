@@ -153,7 +153,11 @@ fn build_authorize_url(
     code_challenge: &str,
     resource: &str,
 ) -> String {
-    let sep = if authorization_endpoint.contains('?') { '&' } else { '?' };
+    let sep = if authorization_endpoint.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
     format!(
         "{authorization_endpoint}{sep}response_type=code&client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&resource={}",
         urlencoding::encode(client_id),
@@ -175,6 +179,14 @@ fn expires_at_from(expires_in: Option<i64>) -> i64 {
     match expires_in {
         Some(s) if s > 0 => now_secs() + s,
         _ => 0,
+    }
+}
+
+fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::SeqCst) {
+        Err("授权已取消".to_string())
+    } else {
+        Ok(())
     }
 }
 
@@ -212,7 +224,11 @@ pub async fn refresh_access_token(
         ("resource", resource),
     ];
     let t = post_token(token_endpoint, &params).await?;
-    Ok((t.access_token, t.refresh_token, expires_at_from(t.expires_in)))
+    Ok((
+        t.access_token,
+        t.refresh_token,
+        expires_at_from(t.expires_in),
+    ))
 }
 
 async fn post_token(token_endpoint: &str, params: &[(&str, &str)]) -> Result<TokenResp, String> {
@@ -297,12 +313,15 @@ fn wait_for_code(
 pub async fn run_authorize(
     base_url: &str,
     existing_client_id: Option<String>,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<AuthorizeOutcome, String> {
+    ensure_not_cancelled(&cancelled)?;
     let endpoints = discover_endpoints(base_url).await;
+    ensure_not_cancelled(&cancelled)?;
     let resource = base_url.to_string();
 
-    let server = tiny_http::Server::http("127.0.0.1:0")
-        .map_err(|e| format!("无法启动本地服务器: {e}"))?;
+    let server =
+        tiny_http::Server::http("127.0.0.1:0").map_err(|e| format!("无法启动本地服务器: {e}"))?;
     let server = Arc::new(server);
     let port = server.server_addr().to_ip().map_or(0, |a| a.port());
     let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
@@ -314,7 +333,9 @@ pub async fn run_authorize(
                 .registration_endpoint
                 .clone()
                 .ok_or("服务器未提供注册端点，无法完成 DCR")?;
-            register_client(&reg_ep, &redirect_uri).await?
+            let client_id = register_client(&reg_ep, &redirect_uri).await?;
+            ensure_not_cancelled(&cancelled)?;
+            client_id
         }
     };
 
@@ -329,9 +350,9 @@ pub async fn run_authorize(
         &resource,
     );
 
+    ensure_not_cancelled(&cancelled)?;
     open_browser_keep_session(&authorize_url)?;
 
-    let cancelled = Arc::new(AtomicBool::new(false));
     let code = {
         let state = state.clone();
         let cancelled = cancelled.clone();
@@ -340,6 +361,7 @@ pub async fn run_authorize(
             .map_err(|e| format!("授权任务异常: {e}"))??
     };
 
+    ensure_not_cancelled(&cancelled)?;
     let token = exchange_code(
         &endpoints.token_endpoint,
         &client_id,
@@ -367,7 +389,10 @@ mod tests {
 
     #[test]
     fn origin_strips_path() {
-        assert_eq!(origin_of("https://mcp.notion.com/mcp"), "https://mcp.notion.com");
+        assert_eq!(
+            origin_of("https://mcp.notion.com/mcp"),
+            "https://mcp.notion.com"
+        );
         assert_eq!(origin_of("https://h.io:8443/a/b"), "https://h.io:8443");
     }
 
@@ -381,9 +406,23 @@ mod tests {
 
     #[test]
     fn authorize_url_picks_correct_separator() {
-        let u = build_authorize_url("https://a/auth", "cid", "http://127.0.0.1/cb", "st", "ch", "https://r");
+        let u = build_authorize_url(
+            "https://a/auth",
+            "cid",
+            "http://127.0.0.1/cb",
+            "st",
+            "ch",
+            "https://r",
+        );
         assert!(u.starts_with("https://a/auth?response_type=code"));
-        let u2 = build_authorize_url("https://a/auth?x=1", "cid", "http://127.0.0.1/cb", "st", "ch", "https://r");
+        let u2 = build_authorize_url(
+            "https://a/auth?x=1",
+            "cid",
+            "http://127.0.0.1/cb",
+            "st",
+            "ch",
+            "https://r",
+        );
         assert!(u2.contains("auth?x=1&response_type=code"));
     }
 

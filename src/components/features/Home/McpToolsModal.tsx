@@ -27,6 +27,7 @@ function McpToolsModal({ open, onClose }: { open: boolean; onClose: () => void }
     refreshAll,
     reloadAuthForCurrentServers,
     authorize,
+    cancelAuthorize,
     refreshOne,
     revoke,
     deleteServer,
@@ -133,6 +134,7 @@ function McpToolsModal({ open, onClose }: { open: boolean; onClose: () => void }
                   refreshOk={refreshOk}
                   copyOk={copyOk}
                   onAuthorize={authorize}
+                  onCancelAuthorize={cancelAuthorize}
                   onRefresh={refreshOne}
                   onRevoke={revoke}
                   onDelete={deleteServer}

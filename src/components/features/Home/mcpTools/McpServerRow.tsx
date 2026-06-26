@@ -8,6 +8,7 @@ import {
   TerminalSquare,
   Trash2,
   Unlink,
+  X,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -27,6 +28,7 @@ interface McpServerRowProps {
   refreshOk: Record<string, boolean>;
   copyOk: Record<string, boolean>;
   onAuthorize: (server: McpServerItem) => void;
+  onCancelAuthorize: (server: McpServerItem) => void;
   onRefresh: (server: McpServerItem) => void;
   onRevoke: (server: McpServerItem) => void;
   onDelete: (server: McpServerItem) => void;
@@ -40,6 +42,7 @@ function McpServerRow({
   refreshOk,
   copyOk,
   onAuthorize,
+  onCancelAuthorize,
   onRefresh,
   onRevoke,
   onDelete,
@@ -51,6 +54,8 @@ function McpServerRow({
   const tokenRefreshKey = refreshKey(server.client, server.name)
   const meta = authMeta(status)
   const MetaIcon = meta.icon
+  const needsAuthorize = !status?.authorized || status.needsReauth || status.expired
+  const canManuallyRefresh = !!status?.refreshFailed || !!status?.expiringSoon
   const copyTargets = CLIENTS.filter(c => c.key !== server.client)
   const activeCopyKey = copyTargets.find(c => busyMap[copyKey(server.client, server.name, c.key)])
   const successfulCopyKey = copyTargets.find(c => copyOk[copyKey(server.client, server.name, c.key)])
@@ -80,16 +85,18 @@ function McpServerRow({
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${meta.cls}`} title={status?.message || undefined}>
               <MetaIcon size={11} />{meta.label}
             </span>
-            {status?.authorized ? (
+            {!needsAuthorize ? (
               <>
-                <TooltipIconButton
-                  onClick={() => onRefresh(server)}
-                  disabled={rowBusy || !!busyMap[tokenRefreshKey]}
-                  tooltip="刷新 Token"
-                  className="cursor-pointer disabled:cursor-not-allowed inline-flex items-center justify-center h-6 w-6 rounded-md border border-border text-muted-foreground hover:text-green-500 hover:border-green-500/40 disabled:opacity-50 transition-colors"
-                >
-                  {busyMap[tokenRefreshKey] ? <RefreshCw size={12} className="animate-spin" /> : refreshOk[tokenRefreshKey] ? <Check size={12} className="text-green-500" /> : <RefreshCw size={12} />}
-                </TooltipIconButton>
+                {canManuallyRefresh && (
+                  <TooltipIconButton
+                    onClick={() => onRefresh(server)}
+                    disabled={rowBusy || !!busyMap[tokenRefreshKey]}
+                    tooltip="刷新 Token"
+                    className="cursor-pointer disabled:cursor-not-allowed inline-flex items-center justify-center h-6 w-6 rounded-md border border-border text-muted-foreground hover:text-green-500 hover:border-green-500/40 disabled:opacity-50 transition-colors"
+                  >
+                    {busyMap[tokenRefreshKey] ? <RefreshCw size={12} className="animate-spin" /> : refreshOk[tokenRefreshKey] ? <Check size={12} className="text-green-500" /> : <RefreshCw size={12} />}
+                  </TooltipIconButton>
+                )}
                 <TooltipIconButton
                   onClick={() => onRevoke(server)}
                   disabled={rowBusy}
@@ -99,13 +106,21 @@ function McpServerRow({
                   {rowBusy ? <Loader2 size={11} className="animate-spin" /> : <Unlink size={12} />}
                 </TooltipIconButton>
               </>
+            ) : rowBusy ? (
+              <button
+                onClick={() => onCancelAuthorize(server)}
+                className="cursor-pointer inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-500/12 text-red-600 hover:bg-red-500/20 transition-colors"
+              >
+                <X size={11} />取消授权
+              </button>
             ) : (
               <button
                 onClick={() => onAuthorize(server)}
                 disabled={rowBusy}
                 className="cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-600 hover:bg-cyan-500/25 disabled:opacity-50 transition-colors"
               >
-                {rowBusy ? <Loader2 size={11} className="animate-spin" /> : <KeyRound size={11} />}授权
+                {rowBusy ? <Loader2 size={11} className="animate-spin" /> : <KeyRound size={11} />}
+                {status?.authorized ? '重新授权' : '授权'}
               </button>
             )}
           </>

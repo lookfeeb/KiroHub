@@ -14,8 +14,8 @@ use axum::{
 };
 
 use crate::commands::app_settings_cmd::{
-    decode_credential_key, get_mcp_oauth_store, get_or_init_proxy_runtime, upsert_mcp_oauth_cred,
-    McpOAuthCred,
+    decode_credential_key, get_mcp_oauth_store, get_or_init_proxy_runtime,
+    set_mcp_oauth_refresh_failure, upsert_mcp_oauth_cred, McpOAuthCred,
 };
 use crate::mcp_oauth::refresh_access_token;
 
@@ -35,7 +35,10 @@ pub async fn start_proxy() -> Result<u16, String> {
 
     let app = Router::new()
         .route("/{secret}/{credential_key}/{server_name}", any(handle))
-        .route("/{secret}/{credential_key}/{server_name}/{*rest}", any(handle))
+        .route(
+            "/{secret}/{credential_key}/{server_name}/{*rest}",
+            any(handle),
+        )
         .with_state(state);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -91,15 +94,30 @@ async fn handle(
     };
 
     let mut access_token = cred.access_token.clone();
-    let mut resp = forward(&st.client, &method, &target, &headers, &body_bytes, &access_token).await;
+    let mut resp = forward(
+        &st.client,
+        &method,
+        &target,
+        &headers,
+        &body_bytes,
+        &access_token,
+    )
+    .await;
 
     // 上游 401：尝试刷新一次后重试
     if let Ok(r) = &resp {
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             if let Some(new_token) = try_refresh(&credential_key, &server_name, &cred).await {
                 access_token = new_token;
-                resp = forward(&st.client, &method, &target, &headers, &body_bytes, &access_token)
-                    .await;
+                resp = forward(
+                    &st.client,
+                    &method,
+                    &target,
+                    &headers,
+                    &body_bytes,
+                    &access_token,
+                )
+                .await;
             }
         }
     }
@@ -136,9 +154,19 @@ async fn forward(
 }
 
 /// 刷新 token 并持久化（处理 refresh_token 轮换），返回新 access_token
-async fn try_refresh(credential_key: &str, server_name: &str, cred: &McpOAuthCred) -> Option<String> {
+async fn try_refresh(
+    credential_key: &str,
+    server_name: &str,
+    cred: &McpOAuthCred,
+) -> Option<String> {
     let refresh = cred.refresh_token.clone()?;
-    match refresh_access_token(&cred.token_endpoint, &cred.client_id, &refresh, &cred.resource).await
+    match refresh_access_token(
+        &cred.token_endpoint,
+        &cred.client_id,
+        &refresh,
+        &cred.resource,
+    )
+    .await
     {
         Ok((access, new_refresh, expires_at)) => {
             let updated = McpOAuthCred {
@@ -153,7 +181,9 @@ async fn try_refresh(credential_key: &str, server_name: &str, cred: &McpOAuthCre
             Some(access)
         }
         Err(e) => {
-            log::error!("MCP token 刷新失败 ({credential_key}/{server_name}): {e}");
+            let msg = e.to_string();
+            let _ = set_mcp_oauth_refresh_failure(credential_key, msg.clone());
+            log::error!("MCP token 刷新失败 ({credential_key}/{server_name}): {msg}");
             None
         }
     }
@@ -165,7 +195,10 @@ fn stream_back(upstream: reqwest::Response) -> Response {
     let mut builder = Response::builder().status(status);
     for (name, value) in upstream.headers() {
         let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "transfer-encoding" | "content-length" | "connection") {
+        if matches!(
+            n.as_str(),
+            "transfer-encoding" | "content-length" | "connection"
+        ) {
             continue;
         }
         builder = builder.header(name, value);
