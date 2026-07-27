@@ -15,12 +15,11 @@ use std::{
 use crate::commands::app_settings_cmd::{
     bind_mcp_oauth_server, binding_key, get_mcp_oauth_binding, get_mcp_oauth_store,
     get_or_init_proxy_runtime, mcp_oauth_failure_needs_reauth, normalized_credential_key,
-    proxy_url_for_binding, set_mcp_oauth_refresh_failure, unbind_mcp_oauth_server,
-    upsert_mcp_oauth_cred, McpOAuthCred,
+    proxy_url_for_binding, unbind_mcp_oauth_server, upsert_mcp_oauth_cred, McpOAuthCred,
 };
 use crate::commands::common::run_blocking_task;
 use crate::commands::mcp_cmd::{read_mcp_server_url_for_client, write_mcp_server_url_for_client};
-use crate::mcp_oauth::{refresh_access_token, run_authorize};
+use crate::mcp_oauth::{refresh_stored_credential, run_authorize};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,41 +66,7 @@ fn now_secs() -> i64 {
 }
 
 async fn refresh_credential(credential_key: &str) -> Result<McpOAuthCred, String> {
-    let store = get_mcp_oauth_store()?;
-    let cred = store
-        .creds_by_key
-        .get(credential_key)
-        .cloned()
-        .ok_or("未找到共享 OAuth 凭据")?;
-    let refresh = cred
-        .refresh_token
-        .clone()
-        .ok_or("该凭据没有 refresh_token，需重新授权")?;
-
-    match refresh_access_token(
-        &cred.token_endpoint,
-        &cred.client_id,
-        &refresh,
-        &cred.resource,
-    )
-    .await
-    {
-        Ok((access_token, new_refresh, expires_at)) => {
-            let updated = McpOAuthCred {
-                access_token,
-                refresh_token: new_refresh.or(cred.refresh_token.clone()),
-                expires_at,
-                ..cred
-            };
-            upsert_mcp_oauth_cred(credential_key, updated.clone())?;
-            Ok(updated)
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            let _ = set_mcp_oauth_refresh_failure(credential_key, msg.clone());
-            Err(msg)
-        }
-    }
+    refresh_stored_credential(credential_key, None).await
 }
 
 fn resolve_real_endpoint(

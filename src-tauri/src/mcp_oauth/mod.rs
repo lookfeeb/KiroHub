@@ -1,11 +1,17 @@
 // 远程 MCP 服务器 OAuth (RFC 8414 发现 + RFC 7591 DCR + PKCE 授权码)
 // 用于在本应用内为 url 型 MCP 服务器（如 Notion）完成授权，
-// token 存入 ~/.kirohub/mcp-oauth.json，由本地反代注入 Bearer。
+// token 存入 KiroHub 本地凭据存储，由本地反代注入 Bearer。
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use tokio::sync::Mutex as AsyncMutex;
 
+use crate::commands::app_settings_cmd::{
+    get_mcp_oauth_store, mcp_oauth_failure_needs_reauth, set_mcp_oauth_refresh_failure_if_current,
+    upsert_mcp_oauth_cred_if_current, McpOAuthConditionalUpdate, McpOAuthCred,
+};
 use crate::utils::browser::open_browser_keep_session;
 
 /// 授权流程产出：换到 token + 端点信息，供命令层落盘
@@ -231,6 +237,113 @@ pub async fn refresh_access_token(
     ))
 }
 
+fn credential_refresh_locks() -> &'static StdMutex<HashMap<String, Arc<AsyncMutex<()>>>> {
+    static LOCKS: OnceLock<StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn credential_refresh_lock(credential_key: &str) -> Result<Arc<AsyncMutex<()>>, String> {
+    let mut locks = credential_refresh_locks()
+        .lock()
+        .map_err(|_| "MCP OAuth 刷新锁已损坏".to_string())?;
+    Ok(locks
+        .entry(credential_key.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone())
+}
+
+/// 对持久化凭据执行串行刷新。
+/// `observed_credential` 用于代理/后台任务识别“排队期间已有其它请求刷新成功”，
+/// 此时直接复用最新凭据，避免用已轮换的 refresh_token 再次换取而触发 invalid_grant。
+pub async fn refresh_stored_credential(
+    credential_key: &str,
+    observed_credential: Option<&McpOAuthCred>,
+) -> Result<McpOAuthCred, String> {
+    let lock = credential_refresh_lock(credential_key)?;
+    let _guard = lock.lock().await;
+
+    let store = get_mcp_oauth_store()?;
+    let cred = store
+        .creds_by_key
+        .get(credential_key)
+        .cloned()
+        .ok_or_else(|| "未找到共享 OAuth 凭据".to_string())?;
+
+    if observed_credential.is_some_and(|observed| {
+        observed.access_token != cred.access_token || observed.refresh_token != cred.refresh_token
+    }) {
+        return Ok(cred);
+    }
+    if let Some(message) = store.refresh_failures.get(credential_key) {
+        if mcp_oauth_failure_needs_reauth(message) {
+            return Err(message.clone());
+        }
+    }
+
+    let refresh_token = cred
+        .refresh_token
+        .clone()
+        .ok_or_else(|| "该凭据没有 refresh_token，需重新授权".to_string())?;
+    let attempted_access_token = cred.access_token.clone();
+    match refresh_access_token(
+        &cred.token_endpoint,
+        &cred.client_id,
+        &refresh_token,
+        &cred.resource,
+    )
+    .await
+    {
+        Ok((access_token, new_refresh, expires_at)) => {
+            let updated = McpOAuthCred {
+                access_token,
+                refresh_token: new_refresh.or(cred.refresh_token),
+                expires_at,
+                ..cred
+            };
+            match upsert_mcp_oauth_cred_if_current(
+                credential_key,
+                &attempted_access_token,
+                Some(&refresh_token),
+                updated,
+            )? {
+                McpOAuthConditionalUpdate::Applied(latest)
+                | McpOAuthConditionalUpdate::Changed(latest) => Ok(latest),
+                McpOAuthConditionalUpdate::Missing => {
+                    Err("MCP OAuth 凭据已在刷新期间被移除".to_string())
+                }
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            match set_mcp_oauth_refresh_failure_if_current(
+                credential_key,
+                &attempted_access_token,
+                Some(&refresh_token),
+                message.clone(),
+            ) {
+                Ok(McpOAuthConditionalUpdate::Changed(latest)) => Ok(latest),
+                Ok(McpOAuthConditionalUpdate::Missing) => {
+                    Err("MCP OAuth 凭据已在刷新期间被移除".to_string())
+                }
+                Ok(McpOAuthConditionalUpdate::Applied(_)) => {
+                    if mcp_oauth_failure_needs_reauth(&message) {
+                        log::warn!(
+                            "MCP OAuth 刷新授权已失效 ({credential_key})，需要重新授权: {message}"
+                        );
+                    }
+                    Err(message)
+                }
+                Err(store_error) => {
+                    log::error!(
+                        "记录 MCP OAuth token 刷新失败状态失败 ({credential_key}): {store_error}"
+                    );
+                    Err(format!("{message}；记录刷新失败状态失败: {store_error}"))
+                }
+            }
+        }
+    }
+}
+
 async fn post_token(token_endpoint: &str, params: &[(&str, &str)]) -> Result<TokenResp, String> {
     let resp = reqwest::Client::new()
         .post(token_endpoint)
@@ -441,5 +554,14 @@ mod tests {
         assert_eq!(expires_at_from(None), 0);
         assert_eq!(expires_at_from(Some(0)), 0);
         assert!(expires_at_from(Some(3600)) > now_secs());
+    }
+
+    #[test]
+    fn refreshes_for_the_same_credential_share_one_lock() {
+        let first = credential_refresh_lock("https://mcp.cloudflare.com").unwrap();
+        let second = credential_refresh_lock("https://mcp.cloudflare.com").unwrap();
+        let other = credential_refresh_lock("https://mcp.example.com").unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
     }
 }

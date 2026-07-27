@@ -3,15 +3,15 @@
 // 详见 session-history-parsing.md。
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{BufRead, BufReader};
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use base64::{engine::general_purpose, Engine as _};
 use crate::models::ide_session::{ContentItem, HistoryItem, IdeSession, Message, SessionSummary};
-use rusqlite::{Connection, OpenFlags};
+use base64::{engine::general_purpose, Engine as _};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const MAX_TITLE_CHARS: usize = 72;

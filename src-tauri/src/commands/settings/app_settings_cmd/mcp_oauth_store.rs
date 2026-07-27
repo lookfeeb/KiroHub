@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use super::shared::data_dir;
 
@@ -37,25 +38,39 @@ fn mcp_oauth_path() -> PathBuf {
     data_dir().join("mcp-oauth.json")
 }
 
-pub fn get_mcp_oauth_store() -> Result<McpOAuthStore, String> {
+fn mcp_oauth_store_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_mcp_oauth_store() -> Result<MutexGuard<'static, ()>, String> {
+    mcp_oauth_store_lock()
+        .lock()
+        .map_err(|_| "MCP OAuth 凭据存储锁已损坏".to_string())
+}
+
+fn load_mcp_oauth_store_unlocked() -> Result<McpOAuthStore, String> {
     let mut store = if let Some(json) = crate::db::kv_get("mcp_oauth", "store")? {
         serde_json::from_str(&json).map_err(|e| format!("解析 MCP OAuth 失败: {e}"))?
-    } else if let Some(store) = migrate_legacy_mcp_oauth()? {
-        store
     } else {
-        McpOAuthStore::default()
+        migrate_legacy_mcp_oauth()?.unwrap_or_default()
     };
 
     if normalize_mcp_oauth_store(&mut store) {
-        save_mcp_oauth_store(&store)?;
+        save_mcp_oauth_store_unlocked(&store)?;
     }
 
     Ok(store)
 }
 
-pub fn save_mcp_oauth_store(store: &McpOAuthStore) -> Result<(), String> {
+fn save_mcp_oauth_store_unlocked(store: &McpOAuthStore) -> Result<(), String> {
     let content = serde_json::to_string(store).map_err(|e| format!("序列化失败: {e}"))?;
     crate::db::kv_set("mcp_oauth", "store", &content)
+}
+
+pub fn get_mcp_oauth_store() -> Result<McpOAuthStore, String> {
+    let _guard = lock_mcp_oauth_store()?;
+    load_mcp_oauth_store_unlocked()
 }
 
 fn migrate_legacy_mcp_oauth() -> Result<Option<McpOAuthStore>, String> {
@@ -148,19 +163,77 @@ pub fn proxy_url_for_binding(
     )
 }
 
-pub fn upsert_mcp_oauth_cred(credential_key: &str, cred: McpOAuthCred) -> Result<(), String> {
-    let mut store = get_mcp_oauth_store()?;
-    store.creds_by_key.insert(credential_key.to_string(), cred);
-    store.refresh_failures.remove(credential_key);
-    save_mcp_oauth_store(&store)
+#[derive(Debug, Clone)]
+pub enum McpOAuthConditionalUpdate {
+    Applied(McpOAuthCred),
+    Changed(McpOAuthCred),
+    Missing,
 }
 
-pub fn set_mcp_oauth_refresh_failure(credential_key: &str, message: String) -> Result<(), String> {
-    let mut store = get_mcp_oauth_store()?;
-    store
-        .refresh_failures
-        .insert(credential_key.to_string(), message);
-    save_mcp_oauth_store(&store)
+fn credential_matches(
+    cred: &McpOAuthCred,
+    expected_access_token: &str,
+    expected_refresh_token: Option<&str>,
+) -> bool {
+    cred.access_token == expected_access_token
+        && cred.refresh_token.as_deref() == expected_refresh_token
+}
+
+pub fn upsert_mcp_oauth_cred(credential_key: &str, cred: McpOAuthCred) -> Result<(), String> {
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
+    store.creds_by_key.insert(credential_key.to_string(), cred);
+    store.refresh_failures.remove(credential_key);
+    save_mcp_oauth_store_unlocked(&store)
+}
+
+pub fn upsert_mcp_oauth_cred_if_current(
+    credential_key: &str,
+    expected_access_token: &str,
+    expected_refresh_token: Option<&str>,
+    updated: McpOAuthCred,
+) -> Result<McpOAuthConditionalUpdate, String> {
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
+    let current = store.creds_by_key.get(credential_key).cloned();
+    match current {
+        Some(current)
+            if credential_matches(&current, expected_access_token, expected_refresh_token) =>
+        {
+            store
+                .creds_by_key
+                .insert(credential_key.to_string(), updated.clone());
+            store.refresh_failures.remove(credential_key);
+            save_mcp_oauth_store_unlocked(&store)?;
+            Ok(McpOAuthConditionalUpdate::Applied(updated))
+        }
+        Some(current) => Ok(McpOAuthConditionalUpdate::Changed(current)),
+        None => Ok(McpOAuthConditionalUpdate::Missing),
+    }
+}
+
+pub fn set_mcp_oauth_refresh_failure_if_current(
+    credential_key: &str,
+    expected_access_token: &str,
+    expected_refresh_token: Option<&str>,
+    message: String,
+) -> Result<McpOAuthConditionalUpdate, String> {
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
+    let current = store.creds_by_key.get(credential_key).cloned();
+    match current {
+        Some(current)
+            if credential_matches(&current, expected_access_token, expected_refresh_token) =>
+        {
+            store
+                .refresh_failures
+                .insert(credential_key.to_string(), message);
+            save_mcp_oauth_store_unlocked(&store)?;
+            Ok(McpOAuthConditionalUpdate::Applied(current))
+        }
+        Some(current) => Ok(McpOAuthConditionalUpdate::Changed(current)),
+        None => Ok(McpOAuthConditionalUpdate::Missing),
+    }
 }
 
 pub fn bind_mcp_oauth_server(
@@ -168,11 +241,12 @@ pub fn bind_mcp_oauth_server(
     server_name: &str,
     credential_key: &str,
 ) -> Result<(), String> {
-    let mut store = get_mcp_oauth_store()?;
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
     store
         .server_bindings
         .insert(binding_key(client, server_name), credential_key.to_string());
-    save_mcp_oauth_store(&store)
+    save_mcp_oauth_store_unlocked(&store)
 }
 
 pub fn get_mcp_oauth_binding(client: &str, server_name: &str) -> Result<Option<String>, String> {
@@ -187,12 +261,13 @@ pub fn unbind_mcp_oauth_server(
     client: &str,
     server_name: &str,
 ) -> Result<Option<(String, McpOAuthCred, bool)>, String> {
-    let mut store = get_mcp_oauth_store()?;
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
     let Some(credential_key) = store
         .server_bindings
         .remove(&binding_key(client, server_name))
     else {
-        save_mcp_oauth_store(&store)?;
+        save_mcp_oauth_store_unlocked(&store)?;
         return Ok(None);
     };
 
@@ -205,7 +280,7 @@ pub fn unbind_mcp_oauth_server(
         store.refresh_failures.remove(&credential_key);
     }
 
-    save_mcp_oauth_store(&store)?;
+    save_mcp_oauth_store_unlocked(&store)?;
     Ok(cred.map(|c| (credential_key, c, removed_last)))
 }
 
@@ -215,7 +290,8 @@ pub fn remove_mcp_oauth_cred(server_key: &str) -> Result<(), String> {
 }
 
 pub fn get_or_init_proxy_runtime() -> Result<(u16, String), String> {
-    let mut store = get_mcp_oauth_store()?;
+    let _guard = lock_mcp_oauth_store()?;
+    let mut store = load_mcp_oauth_store_unlocked()?;
     let mut changed = false;
 
     if store.proxy_port.is_none() {
@@ -236,7 +312,7 @@ pub fn get_or_init_proxy_runtime() -> Result<(u16, String), String> {
     }
 
     if changed {
-        save_mcp_oauth_store(&store)?;
+        save_mcp_oauth_store_unlocked(&store)?;
     }
 
     let port = store
@@ -247,4 +323,43 @@ pub fn get_or_init_proxy_runtime() -> Result<(u16, String), String> {
         .ok_or_else(|| "MCP OAuth 反代密钥初始化失败".to_string())?;
 
     Ok((port, secret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{credential_matches, mcp_oauth_failure_needs_reauth, McpOAuthCred};
+
+    fn credential(access_token: &str, refresh_token: Option<&str>) -> McpOAuthCred {
+        McpOAuthCred {
+            client_id: "client".to_string(),
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.map(str::to_string),
+            expires_at: 0,
+            auth_endpoint: "https://example.com/authorize".to_string(),
+            token_endpoint: "https://example.com/token".to_string(),
+            mcp_endpoint: "https://example.com/mcp".to_string(),
+            resource: "https://example.com".to_string(),
+        }
+    }
+
+    #[test]
+    fn recognizes_permanent_refresh_grant_errors() {
+        assert!(mcp_oauth_failure_needs_reauth(
+            r#"token 换取失败 (400 Bad Request): {"error":"invalid_grant","error_description":"Grant not found"}"#
+        ));
+        assert!(mcp_oauth_failure_needs_reauth(
+            "refresh token revoked by server"
+        ));
+        assert!(!mcp_oauth_failure_needs_reauth(
+            "token 请求失败: connection reset"
+        ));
+    }
+
+    #[test]
+    fn conditional_refresh_checks_access_and_rotating_refresh_tokens() {
+        let current = credential("access-1", Some("refresh-2"));
+        assert!(credential_matches(&current, "access-1", Some("refresh-2")));
+        assert!(!credential_matches(&current, "access-0", Some("refresh-2")));
+        assert!(!credential_matches(&current, "access-1", Some("refresh-1")));
+    }
 }

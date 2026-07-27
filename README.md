@@ -6,10 +6,10 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue" alt="Platform">
-  <img src="https://img.shields.io/github/v/release/hj01857655/kiro-account-manager?label=Version&color=green" alt="Version">
-  <img src="https://img.shields.io/github/downloads/hj01857655/kiro-account-manager/total?color=brightgreen" alt="Downloads">
+  <img src="https://img.shields.io/github/v/release/lookfeeb/KiroHub?label=Version&color=green" alt="Version">
+  <img src="https://img.shields.io/github/downloads/lookfeeb/KiroHub/total?color=brightgreen" alt="Downloads">
   <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-orange" alt="License">
-  <img src="https://img.shields.io/badge/Stack-Tauri%202%20%2B%20React%2018%20%2B%20Rust-8A2BE2" alt="Stack">
+  <img src="https://img.shields.io/badge/Stack-Tauri%202%20%2B%20React%2019%20%2B%20Rust-8A2BE2" alt="Stack">
 </p>
 
 <p align="center">
@@ -46,6 +46,8 @@ KiroHub 是一个用于集中管理 **Kiro IDE** 与 **Kiro CLI** 账号的桌�
 - **双端登录态**：同一账号可分别登录到 Kiro IDE 与 Kiro CLI，卡片上用 `IDE` / `CLI` 徽标区分，切换时可多选目标。
 - **多种登录方式**：Google / GitHub 的 Social OAuth，以及 AWS BuilderId / IAM Identity Center 的 IdC 流程，登录入口集成在「添加账号」弹窗内。
 - **自动化**：Token 到期自动刷新、余额不足自动换号、机器码绑定与重置。
+- **跨工具历史**：统一浏览 Codex、Claude、Antigravity CLI / IDE 的本地会话记录。
+- **MCP 整合**：集中管理 Kiro、Codex、Claude CLI 的 MCP 配置与远程 OAuth 授权。
 - **桌面能力**：Deep Link OAuth 回调、单实例、系统托盘、自动更新。
 
 ---
@@ -71,6 +73,15 @@ KiroHub 是一个用于集中管理 **Kiro IDE** 与 **Kiro CLI** 账号的桌�
 - JSON 凭证导入、从 Kiro IDE 导入、从 kiro-cli 数据库导入
 - 在线登录方式作为「添加账号」弹窗内的一个标签页
 
+### 🗂️ 历史会话管理
+- 聚合 Codex、Claude、Antigravity CLI / IDE 的本地历史，按平台、工作目录和会话分层展示
+- 支持标题、目录、来源及会话内容搜索，左侧列表可拖动调整宽度
+- 预览角色、摘要和 Markdown 内容，支持复制消息或文件路径，并可导出 Markdown / JSON
+
+### 🧩 MCP 工具管理
+- 统一查看 Kiro、Codex、Claude CLI 的 MCP 服务器，支持扫描导入、跨客户端复制、启停和删除
+- 远程 MCP 支持 OAuth 授权、刷新、撤销及本地代理；授权失效时会明确提示重新授权
+
 ### 🌐 内置 Kiro API 网关
 - 兼容 Anthropic `/v1/messages`、OpenAI `/v1/responses`、`/v1/chat/completions`
 - 模型智能降级、多账号负载均衡、API Key 鉴权、请求日志与统计
@@ -86,7 +97,7 @@ KiroHub 是一个用于集中管理 **Kiro IDE** 与 **Kiro CLI** 账号的桌�
 
 | 层 | 技术 |
 |----|------|
-| 前端 | React 18、Vite 5、TailwindCSS 4、shadcn/Radix UI、react-i18next（仅中文） |
+| 前端 | React 19、Vite 8、TailwindCSS 4、shadcn/Radix UI、内置轻量中文 i18n |
 | 桌面框架 | Tauri 2.x（WebView2 / WebKitGTK） |
 | 后端 | Rust（tauri command）、rusqlite、reqwest、axum（网关） |
 | 平台 | Windows / macOS / Linux |
@@ -111,7 +122,7 @@ graph TD
 
     subgraph BE["后端 (Rust)"]
         CMD["commands: account / auth / gateway / kiro_cli / kiro_settings ..."]
-        TASKS["后台任务: token_refresh / model_lock / auto_switch"]
+        TASKS["后台任务: token_refresh / mcp_token_refresh / model_lock / auto_switch"]
         GW["内置网关 (axum)"]
         STORE["账号存储 (JSON)"]
     end
@@ -174,6 +185,8 @@ graph LR
 | 切号 | `switch_kiro_account`（IDE）/ `switch_to_cli_account`（CLI）/ `rollback_cli_switch` | 双端切换与回滚 |
 | Token | `refresh_account_token` / `check_token_status` / `refresh_all_expiring_tokens` | 刷新与过期检测 |
 | 机器码 | `get_system_machine_guid` / `reset_system_machine_guid` / `bind_machine_id_to_account` | 机器码绑定 / 重置 |
+| 会话 | `list_session_tree` / `load_session` / `export_session` / `delete_session` | 聚合、预览、导出与清理外部会话历史 |
+| MCP | `get_mcp_config_by_client` / `mcp_oauth_authorize_for_client` / `mcp_oauth_refresh_for_client` | 多客户端配置与远程 OAuth 管理 |
 | 网关 | `start_gateway` / `stop_gateway` / `get_gateway_request_stats` | 网关启停与统计 |
 | 设置 | `get_kiro_settings` / `set_kiro_model` / `get_app_settings` / `save_app_settings` | 配置读写 |
 
@@ -181,7 +194,7 @@ graph LR
 
 ## 🔁 后台任务
 
-三个常驻后台任务在应用启动时拉起（`setup_app`），通过 `emit("accounts-updated")` 通知前端刷新：
+四个常驻后台任务在应用启动时拉起（`setup_app`），按职责刷新账号、MCP 授权和运行状态：
 
 ```mermaid
 flowchart TD
@@ -196,6 +209,10 @@ flowchart TD
     subgraph T3["model_lock (模型锁定)"]
         C1["读取 Kiro 设置"] --> C2{当前模型≠锁定模型?}
         C2 -->|是| C3["set_kiro_model 写回锁定模型"]
+    end
+    subgraph T4["mcp_token_refresh"]
+        D1["定时扫描远程 MCP 凭据"] --> D2{Token 即将过期?}
+        D2 -->|是| D3["刷新 Token；失效授权标记为需重新授权"]
     end
 ```
 
@@ -286,14 +303,14 @@ flowchart LR
 ## 📁 目录结构
 
 ```text
-KiroAccountManager/
+KiroHub/
 ├─ src/                      # 前端 (React + Vite)
 │  ├─ components/
 │  │  ├─ features/           # 业务页面
-│  │  │  ├─ Home/            # 首页 / 仪表盘
+│  │  │  ├─ Home/            # 首页 / 仪表盘 / MCP 工具管理
 │  │  │  ├─ AccountManager/  # 账号管理（卡片/列表、切换、导入弹窗）
 │  │  │  ├─ Login/           # 登录方式（嵌入导入弹窗）
-│  │  │  ├─ SessionManager/  # 会话管理
+│  │  │  ├─ SessionManager/  # Codex / Claude / Antigravity 历史会话管理
 │  │  │  ├─ Gateway/         # 内置 API 网关配置
 │  │  │  ├─ Layout/          # 整体布局 / 侧边栏
 │  │  │  ├─ Settings/        # 设置（通用 / 通知 / 关于）
@@ -303,8 +320,8 @@ KiroAccountManager/
 │  ├─ hooks/ contexts/       # 状态与逻辑
 │  ├─ App.tsx main.tsx       # 应用入口
 │  ├─ i18n.tsx               # 国际化（仅简体中文）
-│  └─ routes.tsx             # 路由 / 侧边栏菜单
-├─ locales/zh-CN.json        # 中文文案
+│  ├─ routes.tsx             # 路由 / 侧边栏菜单
+│  └─ locales/zh-CN.ts       # 中文文案
 ├─ src-tauri/                # 后端 (Rust + Tauri)
 │  ├─ src/
 │  │  ├─ commands/           # Tauri 命令（account_cmd/ 等已按域拆分为子目录）
@@ -314,7 +331,7 @@ KiroAccountManager/
 │  │  ├─ gateway/            # 内置网关（axum）：converter/ 协议转换、proxy/ 转发
 │  │  ├─ mcp_oauth/ mcp_proxy/ # MCP OAuth 与代理
 │  │  ├─ clients/            # HTTP 客户端（带代理的 reqwest）
-│  │  ├─ db/ models/ services/ # 数据库、数据模型、业务服务
+│  │  ├─ db/ models/ services/ # 数据库、数据模型、业务服务及外部会话解析
 │  │  ├─ tasks/              # 后台任务（token_refresh、mcp_token_refresh）
 │  │  ├─ model_lock.rs       # 模型锁定后台任务
 │  │  ├─ auto_switch.rs      # 自动换号后台任务
@@ -340,7 +357,7 @@ KiroAccountManager/
 - **Linux**: x86_64，需要 WebKitGTK 4.0+
 
 **安装说明**：
-- **Windows**: 双击 `.msi` 安装（v1.8.3+ 支持覆盖升级）
+- **Windows**: 双击 `.msi` 安装，支持在现有版本上直接覆盖升级
 - **macOS**: 打开 `.dmg` 拖入 Applications；若提示「已损坏」，执行 `xattr -cr /Applications/KiroHub.app`
 - **Linux AppImage**: `chmod +x` 后直接运行；**DEB**: `sudo dpkg -i`
 
@@ -359,6 +376,12 @@ A: 已修复为登录成功后自动刷新；若仍未刷新，重新进入「�
 
 **Q: 点击关闭按钮后应用没退出？**
 A: 默认隐藏到系统托盘，点托盘菜单「退出应用」可彻底退出（可在设置里改为直接退出）。
+
+**Q: MCP Token 刷新提示 `invalid_grant`？**
+A: 这表示远程服务已不再认可旧的授权凭据。应用会将该连接标记为“需重新授权”，在 MCP 工具中重新完成一次 OAuth 授权即可。
+
+**Q: 会话管理里没有显示最新记录？**
+A: 点击会话列表顶部的刷新按钮会清除扫描缓存并重新读取 Codex、Claude、Antigravity 的本地历史目录。
 
 ---
 

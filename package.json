@@ -1,13 +1,13 @@
 {
   "name": "kirohub",
   "private": true,
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "KiroHub - 管理 Kiro IDE 账号，支持多账号切换和配额监控",
   "author": "lookfeeb",
   "license": "CC-BY-NC-SA-4.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hj01857655/kiro-account-manager"
+    "url": "https://github.com/lookfeeb/KiroHub"
   },
   "type": "module",
   "scripts": {
@@ -23,12 +23,7 @@
     "build:release": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./build-release.ps1",
     "preview": "vite preview",
     "pretauri": "npm run sync:version",
-    "tauri": "tauri",
-    "release": "standard-version",
-    "release:minor": "standard-version --release-as minor",
-    "release:major": "standard-version --release-as major",
-    "release:patch": "standard-version --release-as patch",
-    "release:check": "npm run sync:version"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -75,7 +70,6 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "standard-version": "9.5.0",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.14"

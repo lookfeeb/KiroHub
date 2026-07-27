@@ -1,11 +1,8 @@
 // 远程 MCP OAuth 令牌后台自动刷新任务
 // 每 60s 扫描凭证，对 10 分钟内过期者用 refresh_token 续期，处理 refresh_token 轮换并持久化
 
-use crate::commands::app_settings_cmd::{
-    get_mcp_oauth_store, mcp_oauth_failure_needs_reauth, set_mcp_oauth_refresh_failure,
-    upsert_mcp_oauth_cred,
-};
-use crate::mcp_oauth::refresh_access_token;
+use crate::commands::app_settings_cmd::{get_mcp_oauth_store, mcp_oauth_failure_needs_reauth};
+use crate::mcp_oauth::refresh_stored_credential;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{interval, Duration};
 
@@ -39,34 +36,20 @@ async fn refresh_due(app_handle: &AppHandle) -> Result<(), String> {
         if cred.expires_at == 0 || cred.expires_at - now >= REFRESH_THRESHOLD_SECONDS {
             continue;
         }
-        let Some(refresh_token) = cred.refresh_token.as_deref() else {
+        if cred.refresh_token.is_none() {
             continue;
-        };
-        match refresh_access_token(
-            &cred.token_endpoint,
-            &cred.client_id,
-            refresh_token,
-            &cred.resource,
-        )
-        .await
-        {
-            Ok((access_token, new_refresh, expires_at)) => {
-                let mut updated = cred.clone();
-                updated.access_token = access_token;
-                updated.expires_at = expires_at;
-                // refresh_token 轮换：服务端可能返回新的，否则沿用旧的
-                if let Some(rt) = new_refresh {
-                    updated.refresh_token = Some(rt);
-                }
-                upsert_mcp_oauth_cred(key, updated)?;
+        }
+        match refresh_stored_credential(key, Some(cred)).await {
+            Ok(_updated) => {
                 changed = true;
                 log::info!("MCP token refreshed: {key}");
             }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = set_mcp_oauth_refresh_failure(key, msg.clone());
+            Err(error) => {
+                let msg = error.to_string();
                 changed = true;
-                log::error!("MCP token refresh failed [{key}]: {msg}");
+                if !mcp_oauth_failure_needs_reauth(&msg) {
+                    log::error!("MCP token refresh failed [{key}]: {msg}");
+                }
             }
         }
     }

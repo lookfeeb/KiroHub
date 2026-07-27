@@ -32,7 +32,11 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
         }
         let mut history = Vec::new();
         if !parsed.cwd.is_empty() {
-            history.push(history_item("system", format!("工作目录：{}", parsed.cwd), 0));
+            history.push(history_item(
+                "system",
+                format!("工作目录：{}", parsed.cwd),
+                0,
+            ));
         }
         for (i, (role, text)) in parsed.blocks.iter().enumerate() {
             history.push(history_item(role, text.clone(), i + 1));
@@ -57,7 +61,11 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
     let parsed = (d.parse)(&content);
     let mut history = Vec::new();
     if !parsed.cwd.is_empty() {
-        history.push(history_item("system", format!("工作目录：{}", parsed.cwd), 0));
+        history.push(history_item(
+            "system",
+            format!("工作目录：{}", parsed.cwd),
+            0,
+        ));
     }
     for (i, (role, text)) in parsed.blocks.iter().enumerate() {
         history.push(history_item(role, text.clone(), i + 1));
@@ -76,7 +84,10 @@ fn history_item(role: &str, text: String, idx: usize) -> HistoryItem {
     HistoryItem {
         message: Message {
             role: role.to_string(),
-            content: vec![ContentItem { content_type: "text".to_string(), text }],
+            content: vec![ContentItem {
+                content_type: "text".to_string(),
+                text,
+            }],
             is_hidden: false,
             id: format!("ext-{idx}"),
         },
@@ -100,16 +111,20 @@ pub fn file_path(hash: &str, session_id: &str) -> anyhow::Result<String> {
 
 pub fn delete_session(hash: &str, session_id: &str) -> anyhow::Result<()> {
     let (d, path) = locate(hash, session_id).ok_or_else(|| anyhow::anyhow!("非法的会话路径"))?;
+    let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+    if d.source == "codex" {
+        let result = delete_codex_session(&root, &path);
+        invalidate_cache();
+        return result;
+    }
+    if matches!(d.layout, Layout::Antigravity | Layout::AntigravityIde) {
+        let result = delete_antigravity_session(d, &root, session_id);
+        invalidate_cache();
+        return result;
+    }
     match d.layout {
         Layout::File { .. } => fs::remove_file(&path)?,
-        Layout::Antigravity => fs::remove_file(&path)?,
-        Layout::AntigravityIde => {
-            if path.is_dir() {
-                fs::remove_dir_all(&path)?;
-            } else {
-                fs::remove_file(&path)?;
-            }
-        }
+        Layout::Antigravity | Layout::AntigravityIde => unreachable!(),
     }
     invalidate_cache();
     Ok(())
@@ -117,9 +132,33 @@ pub fn delete_session(hash: &str, session_id: &str) -> anyhow::Result<()> {
 
 /// 删除整个 workspace（该 cwd 下全部会话）
 pub fn delete_workspace(hash: &str) -> anyhow::Result<()> {
-    let keys: Vec<String> = list_sessions(hash).into_iter().map(|s| s.session_id).collect();
-    for k in keys {
-        let _ = delete_session(hash, &k);
+    let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
+    let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+    let workspace = hash.strip_prefix(d.prefix).unwrap_or_default();
+    if d.source == "codex" {
+        let result = delete_codex_workspace(&root, workspace);
+        invalidate_cache();
+        return result;
     }
-    Ok(())
+    if matches!(d.layout, Layout::Antigravity | Layout::AntigravityIde) {
+        let result = delete_antigravity_workspace(d, &root, workspace);
+        invalidate_cache();
+        return result;
+    }
+
+    let keys: Vec<String> = list_sessions(hash)
+        .into_iter()
+        .map(|s| s.session_id)
+        .collect();
+    let mut errors = Vec::new();
+    for k in keys {
+        if let Err(error) = delete_session(hash, &k) {
+            errors.push(format!("{k}: {error}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(errors.join("；")))
+    }
 }

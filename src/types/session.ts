@@ -36,6 +36,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | 'artifact'
   content: ContentItem[]
   id: string
+  isHidden?: boolean
 }
 
 export interface ContentItem {

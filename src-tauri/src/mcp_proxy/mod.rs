@@ -15,9 +15,9 @@ use axum::{
 
 use crate::commands::app_settings_cmd::{
     decode_credential_key, get_mcp_oauth_store, get_or_init_proxy_runtime,
-    set_mcp_oauth_refresh_failure, upsert_mcp_oauth_cred, McpOAuthCred,
+    mcp_oauth_failure_needs_reauth, McpOAuthCred,
 };
-use crate::mcp_oauth::refresh_access_token;
+use crate::mcp_oauth::refresh_stored_credential;
 
 #[derive(Clone)]
 struct ProxyState {
@@ -80,6 +80,13 @@ async fn handle(
     let Some(cred) = store.creds_by_key.get(&credential_key).cloned() else {
         return text_resp(StatusCode::NOT_FOUND, "unknown credential key");
     };
+    if store
+        .refresh_failures
+        .get(&credential_key)
+        .is_some_and(|message| mcp_oauth_failure_needs_reauth(message))
+    {
+        return text_resp(StatusCode::UNAUTHORIZED, "MCP OAuth 已失效，请重新授权");
+    }
 
     // 拼接上游 URL：mcp_endpoint + 子路径
     let target = match &rest {
@@ -159,31 +166,25 @@ async fn try_refresh(
     server_name: &str,
     cred: &McpOAuthCred,
 ) -> Option<String> {
-    let refresh = cred.refresh_token.clone()?;
-    match refresh_access_token(
-        &cred.token_endpoint,
-        &cred.client_id,
-        &refresh,
-        &cred.resource,
-    )
-    .await
+    cred.refresh_token.as_ref()?;
+    if get_mcp_oauth_store()
+        .ok()
+        .and_then(|store| store.refresh_failures.get(credential_key).cloned())
+        .as_deref()
+        .is_some_and(mcp_oauth_failure_needs_reauth)
     {
-        Ok((access, new_refresh, expires_at)) => {
-            let updated = McpOAuthCred {
-                access_token: access.clone(),
-                refresh_token: new_refresh.or(cred.refresh_token.clone()),
-                expires_at,
-                ..cred.clone()
-            };
-            if let Err(e) = upsert_mcp_oauth_cred(credential_key, updated) {
-                log::error!("保存刷新后的 MCP 凭证失败: {e}");
+        // invalid_grant/Grant not found 已记录为需重新授权，后续请求不再重复换取
+        // 已失效的 grant，也不再刷屏输出 ERROR。
+        return None;
+    }
+
+    match refresh_stored_credential(credential_key, Some(cred)).await {
+        Ok(updated) => Some(updated.access_token),
+        Err(error) => {
+            let message = error.to_string();
+            if !mcp_oauth_failure_needs_reauth(&message) {
+                log::error!("MCP token 刷新失败 ({credential_key}/{server_name}): {message}");
             }
-            Some(access)
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            let _ = set_mcp_oauth_refresh_failure(credential_key, msg.clone());
-            log::error!("MCP token 刷新失败 ({credential_key}/{server_name}): {msg}");
             None
         }
     }
