@@ -1,4 +1,4 @@
-// 外部 AI CLI 历史会话解析：Codex / Claude / Antigravity
+// 外部 AI 历史会话解析：Codex / Claude / Antigravity / Gemini CLI
 // 统一映射到既有 SessionSummary / IdeSession 模型，作为新的 source 接入会话管理。
 // 详见 session-history-parsing.md。
 
@@ -13,7 +13,6 @@ use crate::models::ide_session::{ContentItem, HistoryItem, IdeSession, Message, 
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const MAX_TITLE_CHARS: usize = 72;
 const CACHE_TTL: Duration = Duration::from_secs(5);
 
@@ -36,6 +35,8 @@ enum Layout {
     Antigravity,
     /// Antigravity IDE: root/brain/<uuid> 聚合 task / plan / walkthrough / transcript
     AntigravityIde,
+    /// Gemini CLI: ~/.gemini/tmp/<project>/chats/*.jsonl
+    Gemini,
 }
 
 /// 一个外部 CLI 历史来源的定义。
@@ -75,12 +76,28 @@ static SOURCES: &[SourceDef] = &[
         scan: |_| None,
     },
     SourceDef {
+        prefix: "antigravity-backup:",
+        source: "antigravity-backup",
+        root: antigravity_backup_root,
+        layout: Layout::Antigravity,
+        parse: parse_antigravity,
+        scan: |_| None,
+    },
+    SourceDef {
         prefix: "antigravity-ide:",
         source: "antigravity-ide",
         root: antigravity_ide_root,
         layout: Layout::AntigravityIde,
         parse: parse_antigravity,
         scan: |_| None,
+    },
+    SourceDef {
+        prefix: "gemini:",
+        source: "gemini",
+        root: gemini_tmp_root,
+        layout: Layout::Gemini,
+        parse: parse_gemini,
+        scan: scan_gemini_summary,
     },
 ];
 
@@ -96,17 +113,35 @@ pub fn handles(hash: &str) -> bool {
 fn home() -> Option<PathBuf> {
     dirs::home_dir()
 }
+fn codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home().map(|h| h.join(".codex")))
+}
 fn codex_root() -> Option<PathBuf> {
-    home().map(|h| h.join(".codex").join("sessions"))
+    codex_home().map(|h| h.join("sessions"))
+}
+fn claude_home() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home().map(|h| h.join(".claude")))
 }
 fn claude_root() -> Option<PathBuf> {
-    home().map(|h| h.join(".claude").join("projects"))
+    claude_home().map(|h| h.join("projects"))
 }
 fn antigravity_root() -> Option<PathBuf> {
     home().map(|h| h.join(".gemini").join("antigravity"))
 }
+fn antigravity_backup_root() -> Option<PathBuf> {
+    home().map(|h| h.join(".gemini").join("antigravity-backup"))
+}
 fn antigravity_ide_root() -> Option<PathBuf> {
     home().map(|h| h.join(".gemini").join("antigravity-ide"))
+}
+fn gemini_tmp_root() -> Option<PathBuf> {
+    home().map(|h| h.join(".gemini").join("tmp"))
 }
 
 /// 解析后的中间结构
@@ -119,6 +154,7 @@ struct Parsed {
 }
 
 struct ParsedSummary {
+    stable_id: Option<String>,
     cwd: String,
     title: String,
     created: Option<i64>,
@@ -144,5 +180,6 @@ include!("external_sessions/common.rs");
 include!("external_sessions/antigravity.rs");
 include!("external_sessions/codex.rs");
 include!("external_sessions/claude.rs");
+include!("external_sessions/gemini.rs");
 include!("external_sessions/catalog.rs");
 include!("external_sessions/operations.rs");

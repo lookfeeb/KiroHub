@@ -1,6 +1,14 @@
 // ===== Codex =====
 
 fn parse_codex(content: &str) -> Parsed {
+    parse_codex_reader(BufReader::new(content.as_bytes()))
+}
+
+fn parse_codex_file(path: &Path) -> anyhow::Result<Parsed> {
+    Ok(parse_codex_reader(BufReader::new(fs::File::open(path)?)))
+}
+
+fn parse_codex_reader(reader: impl BufRead) -> Parsed {
     let mut p = Parsed {
         cwd: String::new(),
         title: String::new(),
@@ -8,8 +16,8 @@ fn parse_codex(content: &str) -> Parsed {
         updated: None,
         blocks: Vec::new(),
     };
-    for line in content.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
         if let Some(ts) = v
@@ -73,7 +81,7 @@ fn parse_codex(content: &str) -> Parsed {
 
 fn scan_codex_summary(path: &Path) -> Option<ParsedSummary> {
     let size = fs::metadata(path).map(|m| m.len()).ok()?;
-    if size == 0 || size > MAX_FILE_SIZE {
+    if size == 0 {
         return None;
     }
 
@@ -84,6 +92,7 @@ fn scan_codex_summary(path: &Path) -> Option<ParsedSummary> {
     let mut created = None;
     let mut updated = None;
     let mut message_count = 0usize;
+    let mut stable_id = None;
 
     for line in reader.lines().map_while(Result::ok) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -110,6 +119,12 @@ fn scan_codex_summary(path: &Path) -> Option<ParsedSummary> {
             ("session_meta", _) if cwd.is_empty() => {
                 if let Some(value) = payload.and_then(|x| x.get("cwd")).and_then(|x| x.as_str()) {
                     cwd = value.to_string();
+                }
+                if stable_id.is_none() {
+                    stable_id = payload
+                        .and_then(|x| x.get("id").or_else(|| x.get("session_id")))
+                        .and_then(|x| x.as_str())
+                        .and_then(extract_uuid);
                 }
             }
             ("event_msg", "user_message") => {
@@ -138,11 +153,426 @@ fn scan_codex_summary(path: &Path) -> Option<ParsedSummary> {
     }
 
     Some(ParsedSummary {
+        stable_id: stable_id.or_else(|| codex_id_from_filename(path)),
         cwd,
         title: title_from_user_text(&first_user),
         created,
         updated,
         message_count,
+    })
+}
+
+#[derive(Clone, Default)]
+struct CodexSessionMeta {
+    id: String,
+    rollout_path: String,
+    cwd: String,
+    title: String,
+    first_user_message: String,
+    created: Option<i64>,
+    updated: Option<i64>,
+    history: Vec<(i64, String)>,
+}
+
+fn merge_codex_meta(target: &mut CodexSessionMeta, incoming: CodexSessionMeta) {
+    let incoming_is_newer = incoming.updated.unwrap_or(0) >= target.updated.unwrap_or(0);
+    if target.id.is_empty() {
+        target.id = incoming.id;
+    }
+    if !incoming.rollout_path.is_empty() && (target.rollout_path.is_empty() || incoming_is_newer) {
+        target.rollout_path = incoming.rollout_path;
+    }
+    if !incoming.cwd.is_empty() && (target.cwd.is_empty() || incoming_is_newer) {
+        target.cwd = incoming.cwd;
+    }
+    if !incoming.title.is_empty() && (target.title.is_empty() || incoming_is_newer) {
+        target.title = incoming.title;
+    }
+    if !incoming.first_user_message.is_empty() && target.first_user_message.is_empty() {
+        target.first_user_message = incoming.first_user_message;
+    }
+    target.created = [target.created, incoming.created]
+        .into_iter()
+        .flatten()
+        .min();
+    target.updated = [target.updated, incoming.updated]
+        .into_iter()
+        .flatten()
+        .max();
+    target.history.extend(incoming.history);
+}
+
+fn codex_configured_sqlite_home(codex_home: &Path) -> Option<PathBuf> {
+    let content = fs::read_to_string(codex_home.join("config.toml")).ok()?;
+    let document = content.parse::<toml_edit::DocumentMut>().ok()?;
+    let raw = document.get("sqlite_home")?.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        std::env::current_dir().ok().map(|cwd| cwd.join(path))
+    }
+}
+
+fn codex_database_dirs(codex_home: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![codex_home.to_path_buf(), codex_home.join("sqlite")];
+    if let Some(path) = std::env::var_os("CODEX_SQLITE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        dirs.push(path);
+    }
+    if let Some(path) = codex_configured_sqlite_home(codex_home) {
+        dirs.push(path);
+    }
+    let mut seen = HashSet::new();
+    dirs.retain(|path| seen.insert(normalize_codex_workspace(&path.to_string_lossy())));
+    dirs
+}
+
+fn codex_database_paths_all(codex_home: &Path, prefix: &str) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for dir in codex_database_dirs(codex_home) {
+        match fs::metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() => out.extend(codex_database_paths(&dir, prefix)?),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+fn sqlite_optional_text(columns: &[String], name: &str) -> String {
+    if columns.iter().any(|column| column == name) {
+        format!("coalesce(\"{}\", '')", name.replace('"', "\"\""))
+    } else {
+        "''".to_string()
+    }
+}
+
+fn sqlite_optional_integer(columns: &[String], name: &str) -> String {
+    if columns.iter().any(|column| column == name) {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    } else {
+        "null".to_string()
+    }
+}
+
+fn codex_state_metadata_rows(db_path: &Path) -> anyhow::Result<Vec<CodexSessionMeta>> {
+    let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    conn.busy_timeout(Duration::from_secs(3))?;
+    if !sqlite_table_names(&conn)?
+        .iter()
+        .any(|name| name == "threads")
+    {
+        return Ok(Vec::new());
+    }
+    let columns = sqlite_table_columns(&conn, "threads")?;
+    if !columns.iter().any(|column| column == "id") {
+        return Ok(Vec::new());
+    }
+    let fields = [
+        sqlite_optional_text(&columns, "id"),
+        sqlite_optional_text(&columns, "rollout_path"),
+        sqlite_optional_text(&columns, "cwd"),
+        sqlite_optional_text(&columns, "name"),
+        sqlite_optional_text(&columns, "title"),
+        sqlite_optional_text(&columns, "first_user_message"),
+        sqlite_optional_text(&columns, "preview"),
+        sqlite_optional_integer(&columns, "created_at_ms"),
+        sqlite_optional_integer(&columns, "created_at"),
+        sqlite_optional_integer(&columns, "updated_at_ms"),
+        sqlite_optional_integer(&columns, "updated_at"),
+        sqlite_optional_integer(&columns, "recency_at_ms"),
+        sqlite_optional_integer(&columns, "recency_at"),
+    ];
+    let mut stmt = conn.prepare(&format!("select {} from threads", fields.join(", ")))?;
+    let rows = stmt.query_map([], |row| {
+        let name = row.get::<_, String>(3)?;
+        let title = row.get::<_, String>(4)?;
+        let first_user_message = row.get::<_, String>(5)?;
+        let preview = row.get::<_, String>(6)?;
+        let created_ms = row.get::<_, Option<i64>>(7)?;
+        let created = row.get::<_, Option<i64>>(8)?;
+        let updated_ms = row.get::<_, Option<i64>>(9)?;
+        let updated = row.get::<_, Option<i64>>(10)?;
+        let recency_ms = row.get::<_, Option<i64>>(11)?;
+        let recency = row.get::<_, Option<i64>>(12)?;
+        Ok(CodexSessionMeta {
+            id: row.get(0)?,
+            rollout_path: row.get(1)?,
+            cwd: row.get(2)?,
+            title: [name, title, preview]
+                .into_iter()
+                .find(|value| !value.trim().is_empty())
+                .unwrap_or_default(),
+            first_user_message,
+            created: created_ms
+                .filter(|value| *value > 0)
+                .or_else(|| created.filter(|value| *value > 0))
+                .map(epoch_secs),
+            updated: recency_ms
+                .filter(|value| *value > 0)
+                .or_else(|| updated_ms.filter(|value| *value > 0))
+                .or_else(|| recency.filter(|value| *value > 0))
+                .or_else(|| updated.filter(|value| *value > 0))
+                .map(epoch_secs),
+            history: Vec::new(),
+        })
+    })?;
+    Ok(rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|row| !row.id.is_empty())
+        .collect())
+}
+
+fn codex_index_timestamp(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_str()
+        .and_then(iso_secs)
+        .or_else(|| value.as_i64().map(epoch_secs))
+}
+
+fn codex_metadata_result(root: &Path) -> anyhow::Result<HashMap<String, CodexSessionMeta>> {
+    let codex_home = root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("无法定位 Codex 数据目录"))?;
+    let mut out: HashMap<String, CodexSessionMeta> = HashMap::new();
+
+    for db_path in codex_database_paths_all(codex_home, "state_")? {
+        let Ok(rows) = codex_state_metadata_rows(&db_path) else {
+            continue;
+        };
+        for mut row in rows {
+            let Some(id) = extract_uuid(&row.id) else {
+                continue;
+            };
+            row.id = id.clone();
+            merge_codex_meta(out.entry(id).or_default(), row);
+        }
+    }
+
+    for name in ["session_index.jsonl", "session_index.jsonl.bak"] {
+        let path = codex_home.join(name);
+        let Ok(file) = fs::File::open(path) else {
+            continue;
+        };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            let Some(id) = value
+                .get("id")
+                .and_then(|value| value.as_str())
+                .and_then(extract_uuid)
+            else {
+                continue;
+            };
+            let entry = out.entry(id.clone()).or_insert_with(|| CodexSessionMeta {
+                id,
+                ..Default::default()
+            });
+            if let Some(title) = value.get("thread_name").and_then(|value| value.as_str()) {
+                if !title.trim().is_empty() {
+                    entry.title = title.to_string();
+                }
+            }
+            if let Some(updated) = value.get("updated_at").and_then(codex_index_timestamp) {
+                entry.updated = [entry.updated, Some(updated)].into_iter().flatten().max();
+            }
+        }
+    }
+
+    let history_path = codex_home.join("history.jsonl");
+    if let Ok(file) = fs::File::open(history_path) {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            let Some(id) = value
+                .get("session_id")
+                .and_then(|value| value.as_str())
+                .and_then(extract_uuid)
+            else {
+                continue;
+            };
+            let text = value
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .trim();
+            if text.is_empty() {
+                continue;
+            }
+            let timestamp = value
+                .get("ts")
+                .and_then(|value| value.as_i64())
+                .map(epoch_secs)
+                .unwrap_or_default();
+            let entry = out.entry(id.clone()).or_insert_with(|| CodexSessionMeta {
+                id,
+                ..Default::default()
+            });
+            entry.history.push((timestamp, text.to_string()));
+            if entry.first_user_message.is_empty() {
+                entry.first_user_message = text.to_string();
+            }
+            if timestamp > 0 {
+                entry.created = [entry.created, Some(timestamp)].into_iter().flatten().min();
+                entry.updated = [entry.updated, Some(timestamp)].into_iter().flatten().max();
+            }
+        }
+    }
+
+    for entry in out.values_mut() {
+        entry.history.sort_by_key(|(timestamp, _)| *timestamp);
+        entry.history.dedup();
+    }
+    Ok(out)
+}
+
+fn codex_meta_title(meta: &CodexSessionMeta) -> String {
+    let value = if !meta.title.trim().is_empty() {
+        meta.title.as_str()
+    } else if !meta.first_user_message.trim().is_empty() {
+        meta.first_user_message.as_str()
+    } else {
+        meta.history
+            .first()
+            .map(|(_, text)| text.as_str())
+            .unwrap_or_default()
+    };
+    title_from_user_text(value)
+}
+
+fn collect_codex_source(d: &SourceDef, root: &Path, depth: usize) -> Vec<SessionSummary> {
+    let mut files = Vec::new();
+    collect_files(root, "jsonl", depth, &mut files);
+    files.sort();
+    let mut metadata = codex_metadata_result(root).unwrap_or_default();
+    let mut seen_ids = HashSet::new();
+    let mut out = Vec::new();
+
+    for file in files {
+        let Some(parsed) = scan_codex_summary(&file) else {
+            continue;
+        };
+        let stable_id = parsed.stable_id.clone();
+        if stable_id
+            .as_ref()
+            .is_some_and(|id| !seen_ids.insert(id.clone()))
+        {
+            continue;
+        }
+        let Some(key) = rel_key(root, &file) else {
+            continue;
+        };
+        let mut summary = summary_from_scan(d, parsed, key, &file);
+        if let Some(meta) = stable_id.as_ref().and_then(|id| metadata.remove(id)) {
+            if !meta.title.trim().is_empty() {
+                summary.title = codex_meta_title(&meta);
+            }
+            if summary.workspace_directory.is_empty() && !meta.cwd.is_empty() {
+                summary.workspace_directory = meta.cwd.clone();
+                summary.workspace_hash = format!("{}{}", d.prefix, meta.cwd);
+            }
+            summary.created_at = [summary.created_at, meta.created]
+                .into_iter()
+                .flatten()
+                .min();
+            summary.modified_at = [summary.modified_at, meta.updated]
+                .into_iter()
+                .flatten()
+                .max();
+            summary.message_count = summary.message_count.max(meta.history.len());
+        }
+        out.push(summary);
+    }
+
+    for meta in metadata.into_values() {
+        let cwd = if meta.cwd.trim().is_empty() {
+            "Codex 历史".to_string()
+        } else {
+            meta.cwd.clone()
+        };
+        out.push(SessionSummary {
+            session_id: virtual_session_id("index", &meta.id),
+            title: codex_meta_title(&meta),
+            session_type: d.source.to_string(),
+            workspace_directory: cwd.clone(),
+            workspace_hash: format!("{}{cwd}", d.prefix),
+            message_count: meta
+                .history
+                .len()
+                .max(usize::from(!meta.first_user_message.trim().is_empty())),
+            file_size: 0,
+            created_at: meta.created,
+            modified_at: meta.updated,
+            source: d.source.to_string(),
+        });
+    }
+    out
+}
+
+fn load_codex_index_session(
+    d: &SourceDef,
+    root: &Path,
+    session_id: &str,
+    hash: &str,
+) -> anyhow::Result<IdeSession> {
+    let raw_id = virtual_session_key(session_id, "index")
+        .ok_or_else(|| anyhow::anyhow!("无法识别 Codex 索引会话"))?;
+    let id = extract_uuid(raw_id).ok_or_else(|| anyhow::anyhow!("Codex 会话 ID 无效"))?;
+    let meta = codex_metadata_result(root)?
+        .remove(&id)
+        .ok_or_else(|| anyhow::anyhow!("Codex 索引记录已不存在，请刷新列表"))?;
+    if let Some(path) = safe_codex_rollout_path(root, &meta.rollout_path) {
+        let mut parsed = parse_codex_file(&path)?;
+        if parsed.cwd.is_empty() {
+            parsed.cwd = meta.cwd.clone();
+        }
+        if !meta.title.trim().is_empty() {
+            parsed.title = codex_meta_title(&meta);
+        }
+        return Ok(parsed_to_session(d, session_id, parsed));
+    }
+
+    let cwd = if meta.cwd.trim().is_empty() {
+        hash.strip_prefix(d.prefix)
+            .unwrap_or("Codex 历史")
+            .to_string()
+    } else {
+        meta.cwd.clone()
+    };
+    let mut history = vec![history_item(
+        "system",
+        "Codex 正文文件已不在磁盘；以下内容由 SQLite、会话索引和 history.jsonl 恢复，通常只包含用户输入。".to_string(),
+        0,
+    )];
+    for (_, text) in &meta.history {
+        history.push(history_item("user", text.clone(), history.len()));
+    }
+    if history.len() == 1 && !meta.first_user_message.trim().is_empty() {
+        history.push(history_item(
+            "user",
+            meta.first_user_message.clone(),
+            history.len(),
+        ));
+    }
+    Ok(IdeSession {
+        session_id: session_id.to_string(),
+        title: codex_meta_title(&meta),
+        session_type: d.source.to_string(),
+        workspace_directory: cwd,
+        history,
+        conversation_summary: None,
     })
 }
 
@@ -441,7 +871,7 @@ fn delete_codex_targets(
     let mut metadata_errors = Vec::new();
 
     for prefix in ["state_", "logs_", "goals_", "memories_"] {
-        match codex_database_paths(codex_home, prefix) {
+        match codex_database_paths_all(codex_home, prefix) {
             Ok(paths) => {
                 for db_path in paths {
                     if let Err(error) = delete_thread_rows_from_db(&db_path, ids) {
@@ -560,7 +990,7 @@ fn delete_codex_workspace(root: &Path, workspace: &str) -> anyhow::Result<()> {
         ));
     }
 
-    for db_path in codex_database_paths(codex_home, "state_")? {
+    for db_path in codex_database_paths_all(codex_home, "state_")? {
         for (id, rollout_path, cwd) in codex_state_rows(&db_path)? {
             if normalize_codex_workspace(&cwd) != target {
                 continue;
@@ -587,7 +1017,7 @@ fn delete_codex_workspace(root: &Path, workspace: &str) -> anyhow::Result<()> {
             break;
         }
     }
-    let state_remains = codex_database_paths(codex_home, "state_")?
+    let state_remains = codex_database_paths_all(codex_home, "state_")?
         .iter()
         .map(|path| codex_state_rows(path))
         .collect::<anyhow::Result<Vec<_>>>()?
@@ -606,6 +1036,21 @@ fn delete_codex_workspace(root: &Path, workspace: &str) -> anyhow::Result<()> {
 mod codex_delete_tests {
     use super::*;
 
+    fn no_test_root() -> Option<PathBuf> {
+        None
+    }
+
+    fn test_source() -> SourceDef {
+        SourceDef {
+            prefix: "codex-test:",
+            source: "codex",
+            root: no_test_root,
+            layout: Layout::File { depth: 8 },
+            parse: parse_codex,
+            scan: scan_codex_summary,
+        }
+    }
+
     fn test_dir(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("kirohub-{label}-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
@@ -623,6 +1068,58 @@ mod codex_delete_tests {
             "{\"id\":\"keep\"}\nnot-json\n"
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn restores_codex_session_from_state_index_and_history() {
+        let home = test_dir("codex-restore");
+        let root = home.join("sessions");
+        fs::create_dir_all(&root).unwrap();
+        let id = "11111111-1111-4111-8111-111111111111";
+        let db = home.join("state_5.sqlite");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "create table threads (id text, rollout_path text, cwd text, title text, created_at integer, updated_at integer, first_user_message text);",
+        )
+        .unwrap();
+        conn.execute(
+            "insert into threads values (?1, '', 'C:\\Workspace\\Demo', '数据库标题', 1700000000, 1700000100, '第一条输入')",
+            [id],
+        )
+        .unwrap();
+        drop(conn);
+        fs::write(
+            home.join("session_index.jsonl"),
+            format!(
+                "{{\"id\":\"{id}\",\"thread_name\":\"索引标题\",\"updated_at\":\"2023-11-14T22:16:00Z\"}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            home.join("history.jsonl"),
+            format!("{{\"session_id\":\"{id}\",\"ts\":1700000050,\"text\":\"恢复的用户输入\"}}\n"),
+        )
+        .unwrap();
+
+        let summaries = collect_codex_source(&test_source(), &root, 8);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].session_id, virtual_session_id("index", id));
+        assert_eq!(summaries[0].title, "索引标题");
+        assert_eq!(summaries[0].workspace_directory, "C:\\Workspace\\Demo");
+        assert_eq!(summaries[0].message_count, 1);
+
+        let loaded = load_codex_index_session(
+            &test_source(),
+            &root,
+            &summaries[0].session_id,
+            &summaries[0].workspace_hash,
+        )
+        .unwrap();
+        assert_eq!(loaded.history.len(), 2);
+        assert!(loaded.history[1].message.content[0]
+            .text
+            .contains("恢复的用户输入"));
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

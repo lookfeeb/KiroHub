@@ -92,7 +92,33 @@ fn protobuf_map_entries_result(bytes: &[u8]) -> anyhow::Result<Vec<(&[u8], Strin
         .collect())
 }
 
-#[cfg(test)]
+fn protobuf_string_map_entries_result(bytes: &[u8]) -> anyhow::Result<Vec<(String, &[u8])>> {
+    let mut out = Vec::new();
+    for field in protobuf_fields(bytes)? {
+        if field.number != 1 || field.wire_type != 2 {
+            continue;
+        }
+        let Some(entry) = field.value else {
+            continue;
+        };
+        let fields = protobuf_fields(entry)?;
+        let key = fields
+            .iter()
+            .find(|field| field.number == 1 && field.wire_type == 2)
+            .and_then(|field| field.value)
+            .and_then(|value| std::str::from_utf8(value).ok())
+            .map(str::to_string);
+        let value = fields
+            .iter()
+            .find(|field| field.number == 2 && field.wire_type == 2)
+            .and_then(|field| field.value);
+        if let (Some(key), Some(value)) = (key, value) {
+            out.push((key, value));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 fn protobuf_map_entries(bytes: &[u8]) -> Vec<(&[u8], String)> {
     protobuf_map_entries_result(bytes).unwrap_or_default()
@@ -121,19 +147,47 @@ fn remove_protobuf_map_entries(
     Ok((output, removed))
 }
 
-fn read_antigravity_index(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if metadata.len() > MAX_FILE_SIZE {
-        return Err(anyhow::anyhow!(
-            "Antigravity 索引过大，拒绝修改: {}",
-            path.display()
-        ));
+fn remove_protobuf_string_map_entries(
+    bytes: &[u8],
+    ids: &HashSet<String>,
+) -> anyhow::Result<(Vec<u8>, usize)> {
+    if ids.is_empty() {
+        return Ok((bytes.to_vec(), 0));
     }
-    Ok(Some(fs::read(path)?))
+    let fields = protobuf_fields(bytes)?;
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut removed = 0usize;
+    for field in fields {
+        let remove = field.number == 1
+            && field.wire_type == 2
+            && field.value.is_some_and(|entry| {
+                protobuf_fields(entry)
+                    .ok()
+                    .and_then(|fields| {
+                        fields
+                            .into_iter()
+                            .find(|field| field.number == 1 && field.wire_type == 2)
+                    })
+                    .and_then(|field| field.value)
+                    .and_then(|value| std::str::from_utf8(value).ok())
+                    .and_then(extract_uuid)
+                    .is_some_and(|id| ids.contains(&id))
+            });
+        if remove {
+            removed += 1;
+        } else {
+            output.extend_from_slice(field.raw);
+        }
+    }
+    Ok((output, removed))
+}
+
+fn read_antigravity_index(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn antigravity_summary_index_result(
@@ -225,43 +279,157 @@ fn antigravity_ide_index_result() -> anyhow::Result<HashMap<String, AntigravityI
     }
     let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(Duration::from_secs(3))?;
-    let value = conn
+    let trajectory_value = conn
         .query_row(
             "select value from ItemTable where key = ?1",
             ["antigravityUnifiedStateSync.trajectorySummaries"],
             |row| row.get::<_, String>(0),
         )
         .optional()?;
-    let Some(value) = value else {
-        return Ok(HashMap::new());
-    };
-    let bytes = general_purpose::STANDARD
-        .decode(value)
-        .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 轨迹索引失败: {error}"))?;
-
     let mut out = HashMap::new();
-    for (payload, id) in protobuf_map_entries_result(&bytes)? {
-        let strings = printable_strings(payload);
-        let mut entry = strings
-            .iter()
-            .find_map(|s| antigravity_ide_entry_from_base64(s))
-            .unwrap_or_default();
-        if entry.title.is_empty() {
-            entry.title = strings
+    if let Some(value) = trajectory_value {
+        let bytes = general_purpose::STANDARD
+            .decode(value)
+            .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 轨迹索引失败: {error}"))?;
+        for (payload, id) in protobuf_map_entries_result(&bytes)? {
+            let strings = printable_strings(payload);
+            let mut entry = strings
                 .iter()
-                .map(|s| clean_proto_text(s))
-                .find(|s| is_antigravity_ide_title_candidate(s))
+                .find_map(|s| antigravity_ide_entry_from_base64(s))
                 .unwrap_or_default();
+            if entry.title.is_empty() {
+                entry.title = strings
+                    .iter()
+                    .map(|s| clean_proto_text(s))
+                    .find(|s| is_antigravity_ide_title_candidate(s))
+                    .unwrap_or_default();
+            }
+            if entry.cwd.is_empty() {
+                entry.cwd = strings
+                    .iter()
+                    .find_map(|s| clean_file_uri_at(s))
+                    .unwrap_or_default();
+            }
+            out.insert(id, entry);
         }
-        if entry.cwd.is_empty() {
-            entry.cwd = strings
-                .iter()
-                .find_map(|s| clean_file_uri_at(s))
-                .unwrap_or_default();
+    }
+
+    let artifact_value = conn
+        .query_row(
+            "select value from ItemTable where key = ?1",
+            ["antigravityUnifiedStateSync.artifactReview"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(value) = artifact_value {
+        let bytes = general_purpose::STANDARD
+            .decode(value)
+            .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 产物索引失败: {error}"))?;
+        for (id, title) in antigravity_ide_artifact_titles(&bytes)? {
+            let entry = out.entry(id).or_default();
+            if entry.title.is_empty() {
+                entry.title = title;
+            }
         }
-        out.insert(id, entry);
     }
     Ok(out)
+}
+
+fn antigravity_ide_artifact_title(payload: &[u8]) -> Option<String> {
+    let json = if payload.first().is_some_and(|byte| *byte == b'{') {
+        payload
+    } else {
+        protobuf_fields(payload)
+            .ok()?
+            .into_iter()
+            .filter_map(|field| field.value)
+            .find(|value| value.first().is_some_and(|byte| *byte == b'{'))?
+    };
+    let value = serde_json::from_slice::<serde_json::Value>(json).ok()?;
+    let encoded = value.get("artifactMetadata")?.as_str()?;
+    let bytes = general_purpose::STANDARD.decode(encoded).ok()?;
+    printable_strings(&bytes)
+        .into_iter()
+        .map(|value| clean_proto_text(&value))
+        .find(|value| {
+            (is_readable_proto_text(value) || is_antigravity_ide_title_candidate(value))
+                && extract_uuid(value).is_none()
+        })
+        .map(|value| truncate(&value, MAX_TITLE_CHARS))
+}
+
+fn antigravity_ide_artifact_titles(bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
+    let mut candidates: HashMap<String, (u8, String)> = HashMap::new();
+    for (path, payload) in protobuf_string_map_entries_result(bytes)? {
+        let Some(id) = extract_uuid(&path) else {
+            continue;
+        };
+        let title = antigravity_ide_artifact_title(payload).unwrap_or_default();
+        let priority = if path.ends_with("task.md") {
+            3
+        } else if path.ends_with("implementation_plan.md") {
+            2
+        } else {
+            1
+        };
+        let replace = candidates.get(&id).is_none_or(|(current, current_title)| {
+            !title.is_empty() && (current_title.is_empty() || priority > *current)
+        });
+        if replace {
+            candidates.insert(id, (priority, title));
+        } else {
+            candidates.entry(id).or_insert((0, String::new()));
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .map(|(id, (_, title))| (id, title))
+        .collect())
+}
+
+fn antigravity_ide_artifact_blocks(id: &str) -> Vec<(String, String)> {
+    let Some(db) = antigravity_ide_state_db() else {
+        return Vec::new();
+    };
+    let Ok(conn) = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return Vec::new();
+    };
+    let Ok(value) = conn
+        .query_row(
+            "select value from ItemTable where key = ?1",
+            ["antigravityUnifiedStateSync.artifactReview"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+    else {
+        return Vec::new();
+    };
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Ok(bytes) = general_purpose::STANDARD.decode(value) else {
+        return Vec::new();
+    };
+    let Ok(entries) = protobuf_string_map_entries_result(&bytes) else {
+        return Vec::new();
+    };
+    entries
+        .into_iter()
+        .filter(|(path, _)| extract_uuid(path).as_deref() == Some(id))
+        .filter_map(|(path, payload)| {
+            let title = antigravity_ide_artifact_title(payload)?;
+            let label = if path.ends_with("task.md") {
+                "任务"
+            } else if path.ends_with("implementation_plan.md") {
+                "实施计划"
+            } else if path.ends_with("walkthrough.md") {
+                "完成说明"
+            } else {
+                "产物"
+            };
+            Some(("artifact".to_string(), format!("{label}：{title}")))
+        })
+        .collect()
 }
 
 fn antigravity_ide_index() -> HashMap<String, AntigravityIdeIndexEntry> {
@@ -310,8 +478,7 @@ fn is_antigravity_ide_title_candidate(value: &str) -> bool {
 }
 
 fn read_artifact_meta(path: &Path) -> Option<AntigravityArtifactMeta> {
-    let content = read_capped(path)?;
-    serde_json::from_str(&content).ok()
+    serde_json::from_reader(BufReader::new(fs::File::open(path).ok()?)).ok()
 }
 
 fn antigravity_ide_conversation_path(root: &Path, id: &str) -> PathBuf {
@@ -499,18 +666,24 @@ fn antigravity_ide_summary(
 }
 
 fn first_markdown_heading(path: &Path) -> Option<String> {
-    let content = read_capped(path)?;
-    content.lines().find_map(|line| {
-        let text = line.trim().trim_start_matches('#').trim();
-        (!text.is_empty()).then(|| truncate(text, MAX_TITLE_CHARS))
-    })
+    BufReader::new(fs::File::open(path).ok()?)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|line| {
+            let text = line.trim().trim_start_matches('#').trim();
+            (!text.is_empty()).then(|| truncate(text, MAX_TITLE_CHARS))
+        })
 }
 
 fn antigravity_ide_workspace_from_dir(dir: &Path) -> Option<String> {
     for name in ["task.md", "implementation_plan.md", "walkthrough.md"] {
-        let content = read_capped(&dir.join(name)).unwrap_or_default();
-        if let Some(cwd) = clean_file_uri_at(&content) {
-            return Some(cwd);
+        let Ok(file) = fs::File::open(dir.join(name)) else {
+            continue;
+        };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            if let Some(cwd) = clean_file_uri_at(&line) {
+                return Some(cwd);
+            }
         }
     }
     None
@@ -528,8 +701,8 @@ fn antigravity_ide_message_count(dir: &Path, conv: &Path) -> usize {
         .join("logs")
         .join("transcript.jsonl");
     if fs::metadata(&transcript).map(|m| m.len()).unwrap_or(0) > 0 {
-        count += read_capped(&transcript)
-            .map(|c| c.lines().count())
+        count += fs::File::open(&transcript)
+            .map(|file| BufReader::new(file).lines().map_while(Result::ok).count())
             .unwrap_or(1);
     }
     if conv.extension().and_then(|ext| ext.to_str()) == Some("db") {
@@ -616,7 +789,112 @@ fn collect_antigravity_ide_source(d: &SourceDef, root: &Path) -> Vec<SessionSumm
         }
     }
 
+    let state_db = antigravity_ide_state_db();
+    for (id, entry) in index {
+        if ids.contains(&id) {
+            continue;
+        }
+        let cwd = if entry.cwd.trim().is_empty() {
+            "Antigravity IDE 历史".to_string()
+        } else {
+            normalize_workspace_path(entry.cwd)
+        };
+        out.push(SessionSummary {
+            session_id: virtual_session_id("trajectory", &id),
+            title: if entry.title.trim().is_empty() {
+                "Antigravity IDE 会话".to_string()
+            } else {
+                truncate(&entry.title, MAX_TITLE_CHARS)
+            },
+            session_type: d.source.to_string(),
+            workspace_directory: cwd.clone(),
+            workspace_hash: format!("{}{}", d.prefix, cwd),
+            message_count: 0,
+            file_size: 0,
+            created_at: state_db
+                .as_deref()
+                .and_then(|path| metadata_secs(path, true)),
+            modified_at: state_db
+                .as_deref()
+                .and_then(|path| metadata_secs(path, false)),
+            source: d.source.to_string(),
+        });
+    }
+
     out
+}
+
+fn load_antigravity_summary_session(
+    d: &SourceDef,
+    root: &Path,
+    session_id: &str,
+    hash: &str,
+) -> anyhow::Result<IdeSession> {
+    let raw_id = virtual_session_key(session_id, "summary")
+        .ok_or_else(|| anyhow::anyhow!("无法识别 Antigravity 摘要会话"))?;
+    let id = extract_uuid(raw_id).ok_or_else(|| anyhow::anyhow!("Antigravity 会话 ID 无效"))?;
+    let (title, indexed_cwd) = antigravity_summary_index_result(root)?
+        .remove(&id)
+        .ok_or_else(|| anyhow::anyhow!("Antigravity 摘要索引已不存在，请刷新列表"))?;
+    let cwd = if indexed_cwd.trim().is_empty() {
+        hash.strip_prefix(d.prefix)
+            .unwrap_or("Antigravity 历史")
+            .to_string()
+    } else {
+        indexed_cwd
+    };
+    Ok(IdeSession {
+        session_id: session_id.to_string(),
+        title,
+        session_type: d.source.to_string(),
+        workspace_directory: cwd,
+        history: vec![history_item(
+            "system",
+            "Antigravity 会话正文已不在 conversations 目录；当前仅恢复到摘要索引中的标题和工作区信息。".to_string(),
+            0,
+        )],
+        conversation_summary: None,
+    })
+}
+
+fn load_antigravity_ide_index_session(
+    d: &SourceDef,
+    session_id: &str,
+    hash: &str,
+) -> anyhow::Result<IdeSession> {
+    let raw_id = virtual_session_key(session_id, "trajectory")
+        .ok_or_else(|| anyhow::anyhow!("无法识别 Antigravity IDE 索引会话"))?;
+    let id = extract_uuid(raw_id).ok_or_else(|| anyhow::anyhow!("Antigravity IDE 会话 ID 无效"))?;
+    let entry = antigravity_ide_index_result()?
+        .remove(&id)
+        .ok_or_else(|| anyhow::anyhow!("Antigravity IDE 索引已不存在，请刷新列表"))?;
+    let cwd = if entry.cwd.trim().is_empty() {
+        hash.strip_prefix(d.prefix)
+            .unwrap_or("Antigravity IDE 历史")
+            .to_string()
+    } else {
+        normalize_workspace_path(entry.cwd)
+    };
+    let mut history = vec![history_item(
+        "system",
+        "Antigravity IDE 的 brain/conversations 正文已不在磁盘；当前由 trajectorySummaries 与 artifactReview 恢复只读元数据。".to_string(),
+        0,
+    )];
+    for (role, text) in antigravity_ide_artifact_blocks(&id) {
+        history.push(history_item(&role, text, history.len()));
+    }
+    Ok(IdeSession {
+        session_id: session_id.to_string(),
+        title: if entry.title.trim().is_empty() {
+            "Antigravity IDE 会话".to_string()
+        } else {
+            truncate(&entry.title, MAX_TITLE_CHARS)
+        },
+        session_type: d.source.to_string(),
+        workspace_directory: cwd,
+        history,
+        conversation_summary: None,
+    })
 }
 
 fn load_antigravity_ide_session(
@@ -667,7 +945,7 @@ fn load_antigravity_ide_session(
         if path.extension().and_then(|ext| ext.to_str()) == Some("db") {
             return load_antigravity_ide_db_session(d, path, session_id, hash);
         }
-        let bytes = read_bytes_capped(path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
+        let bytes = read_binary_file(path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
         let parsed = antigravity_strings_to_parsed(&bytes);
         title = if parsed.title == "未命名会话" {
             title
@@ -709,7 +987,7 @@ fn append_antigravity_ide_conversation(history: &mut Vec<HistoryItem>, path: &Pa
         }
         return;
     }
-    if let Some(bytes) = read_bytes_capped(path) {
+    if let Some(bytes) = read_binary_file(path) {
         let parsed = antigravity_strings_to_parsed(&bytes);
         let readable = parsed
             .blocks
@@ -781,7 +1059,7 @@ fn push_antigravity_ide_file(history: &mut Vec<HistoryItem>, dir: &Path, rel: &s
     let path = rel
         .split('/')
         .fold(dir.to_path_buf(), |p, part| p.join(part));
-    let Some(content) = read_capped(&path) else {
+    let Some(content) = read_text_file(&path) else {
         return;
     };
     if content.trim().is_empty() {
@@ -986,14 +1264,21 @@ fn remove_antigravity_ide_state_entries_at(
 ) -> anyhow::Result<()> {
     let mut conn = Connection::open(path)?;
     conn.busy_timeout(Duration::from_secs(3))?;
-    let value = conn
+    let trajectory_value = conn
         .query_row(
             "select value from ItemTable where key = ?1",
             ["antigravityUnifiedStateSync.trajectorySummaries"],
             |row| row.get::<_, String>(0),
         )
         .optional()?;
-    let filtered = value
+    let artifact_value = conn
+        .query_row(
+            "select value from ItemTable where key = ?1",
+            ["antigravityUnifiedStateSync.artifactReview"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let filtered_trajectory = trajectory_value
         .map(|value| {
             let decoded = general_purpose::STANDARD
                 .decode(value)
@@ -1001,14 +1286,33 @@ fn remove_antigravity_ide_state_entries_at(
             remove_protobuf_map_entries(&decoded, ids)
         })
         .transpose()?;
+    let filtered_artifact = artifact_value
+        .map(|value| {
+            let decoded = general_purpose::STANDARD
+                .decode(value)
+                .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 产物索引失败: {error}"))?;
+            remove_protobuf_string_map_entries(&decoded, ids)
+        })
+        .transpose()?;
     let tx = conn.transaction()?;
-    if let Some((filtered, removed)) = filtered {
+    if let Some((filtered, removed)) = filtered_trajectory {
         if removed > 0 {
             tx.execute(
                 "update ItemTable set value = ?1 where key = ?2",
                 rusqlite::params![
                     general_purpose::STANDARD.encode(filtered),
                     "antigravityUnifiedStateSync.trajectorySummaries"
+                ],
+            )?;
+        }
+    }
+    if let Some((filtered, removed)) = filtered_artifact {
+        if removed > 0 {
+            tx.execute(
+                "update ItemTable set value = ?1 where key = ?2",
+                rusqlite::params![
+                    general_purpose::STANDARD.encode(filtered),
+                    "antigravityUnifiedStateSync.artifactReview"
                 ],
             )?;
         }
@@ -1035,20 +1339,38 @@ fn antigravity_ide_state_entries_remain(ids: &HashSet<String>) -> anyhow::Result
     }
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(Duration::from_secs(3))?;
-    let value = conn
+    let trajectory_value = conn
         .query_row(
             "select value from ItemTable where key = ?1",
             ["antigravityUnifiedStateSync.trajectorySummaries"],
             |row| row.get::<_, String>(0),
         )
         .optional()?;
-    if let Some(value) = value {
+    if let Some(value) = trajectory_value {
         let decoded = general_purpose::STANDARD
             .decode(value)
             .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 轨迹索引失败: {error}"))?;
         if protobuf_map_entries_result(&decoded)?
             .iter()
             .any(|(_, id)| ids.contains(id))
+        {
+            return Ok(true);
+        }
+    }
+    let artifact_value = conn
+        .query_row(
+            "select value from ItemTable where key = ?1",
+            ["antigravityUnifiedStateSync.artifactReview"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(value) = artifact_value {
+        let decoded = general_purpose::STANDARD
+            .decode(value)
+            .map_err(|error| anyhow::anyhow!("解析 Antigravity IDE 产物索引失败: {error}"))?;
+        if protobuf_string_map_entries_result(&decoded)?
+            .iter()
+            .any(|(path, _)| extract_uuid(path).is_some_and(|id| ids.contains(&id)))
         {
             return Ok(true);
         }
@@ -1081,20 +1403,16 @@ fn antigravity_id_from_session_id(session_id: &str) -> Option<String> {
 fn antigravity_artifact_workspace_result(dir: &Path) -> anyhow::Result<Option<String>> {
     for name in ["task.md", "implementation_plan.md", "walkthrough.md"] {
         let path = dir.join(name);
-        let metadata = match fs::metadata(&path) {
-            Ok(metadata) => metadata,
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.into()),
         };
-        if metadata.len() > MAX_FILE_SIZE {
-            return Err(anyhow::anyhow!(
-                "Antigravity 工件过大，无法确认工作区: {}",
-                path.display()
-            ));
-        }
-        let content = fs::read_to_string(&path)?;
-        if let Some(cwd) = clean_file_uri_at(&content) {
-            return Ok(Some(cwd));
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if let Some(cwd) = clean_file_uri_at(&line) {
+                return Ok(Some(cwd));
+            }
         }
     }
     Ok(None)
@@ -1418,6 +1736,19 @@ mod antigravity_tests {
         field
     }
 
+    fn bytes_field(number: usize, payload: &[u8]) -> Vec<u8> {
+        let mut field = varint((number << 3) | 2);
+        field.extend(varint(payload.len()));
+        field.extend_from_slice(payload);
+        field
+    }
+
+    fn string_map_entry(key: &str, value: &[u8]) -> Vec<u8> {
+        let mut entry = bytes_field(1, key.as_bytes());
+        entry.extend(bytes_field(2, value));
+        bytes_field(1, &entry)
+    }
+
     #[test]
     fn removes_only_matching_antigravity_summary_entries() {
         let keep = "11111111-1111-4111-8111-111111111111";
@@ -1435,6 +1766,32 @@ mod antigravity_tests {
     fn rejects_truncated_antigravity_index_instead_of_overwriting_it() {
         let result = remove_protobuf_map_entries(&[0x0a, 0xff], &HashSet::new());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn restores_antigravity_artifact_review_ids_and_titles() {
+        let titled = "11111111-1111-4111-8111-111111111111";
+        let untitled = "22222222-2222-4222-8222-222222222222";
+        let metadata = bytes_field(1, "恢复的实施计划".as_bytes());
+        let json = serde_json::to_vec(&serde_json::json!({
+            "artifactMetadata": general_purpose::STANDARD.encode(metadata)
+        }))
+        .unwrap();
+        let wrapped = bytes_field(1, &json);
+        let mut bytes = string_map_entry(&format!("file:///tmp/brain/{titled}/task.md"), &wrapped);
+        let empty_json = bytes_field(1, br#"{"comments":[]}"#);
+        bytes.extend(string_map_entry(
+            &format!("file:///tmp/brain/{untitled}/walkthrough.md"),
+            &empty_json,
+        ));
+
+        let titles = antigravity_ide_artifact_titles(&bytes).unwrap();
+        assert_eq!(titles.len(), 2);
+        assert_eq!(
+            titles.get(titled).map(String::as_str),
+            Some("恢复的实施计划")
+        );
+        assert_eq!(titles.get(untitled).map(String::as_str), Some(""));
     }
 
     #[test]
@@ -1502,6 +1859,10 @@ mod antigravity_tests {
         let remove = "22222222-2222-4222-8222-222222222222";
         let mut bytes = map_entry(keep, "keep");
         bytes.extend(map_entry(remove, "remove"));
+        let artifact = string_map_entry(
+            &format!("file:///tmp/brain/{remove}/task.md"),
+            &bytes_field(1, br#"{}"#),
+        );
         let conn = Connection::open(&db).unwrap();
         conn.execute_batch("create table ItemTable (key text primary key, value text);")
             .unwrap();
@@ -1510,6 +1871,14 @@ mod antigravity_tests {
             rusqlite::params![
                 "antigravityUnifiedStateSync.trajectorySummaries",
                 general_purpose::STANDARD.encode(bytes)
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into ItemTable (key, value) values (?1, ?2)",
+            rusqlite::params![
+                "antigravityUnifiedStateSync.artifactReview",
+                general_purpose::STANDARD.encode(artifact)
             ],
         )
         .unwrap();
@@ -1533,6 +1902,17 @@ mod antigravity_tests {
         let entries = protobuf_map_entries(&decoded);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1, keep);
+        let artifact = conn
+            .query_row(
+                "select value from ItemTable where key = ?1",
+                ["antigravityUnifiedStateSync.artifactReview"],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let artifact = general_purpose::STANDARD.decode(artifact).unwrap();
+        assert!(protobuf_string_map_entries_result(&artifact)
+            .unwrap()
+            .is_empty());
         assert_eq!(
             conn.query_row(
                 "select count(*) from ItemTable where key like ?1",

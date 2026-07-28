@@ -24,7 +24,7 @@ export const PLATFORMS: PlatformMeta[] = [
   { key: 'kiro', label: 'Kiro', sources: ['ide', 'cli'], dotClass: 'bg-blue-500' },
   { key: 'codex', label: 'Codex', sources: ['codex'], dotClass: 'bg-emerald-500' },
   { key: 'claude', label: 'Claude', sources: ['claude'], dotClass: 'bg-orange-500' },
-  { key: 'antigravity', label: 'Antigravity', sources: ['antigravity', 'antigravity-ide'], dotClass: 'bg-cyan-500' },
+  { key: 'antigravity', label: 'Antigravity', sources: ['antigravity', 'antigravity-backup', 'antigravity-ide', 'gemini'], dotClass: 'bg-cyan-500' },
 ]
 
 export const SOURCE_META: Record<string, { label: string; cls: string }> = {
@@ -33,7 +33,9 @@ export const SOURCE_META: Record<string, { label: string; cls: string }> = {
   codex: { label: 'Codex', cls: 'border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-600 dark:text-emerald-400' },
   claude: { label: 'Claude', cls: 'border-orange-500/30 bg-orange-500/[0.06] text-orange-600 dark:text-orange-400' },
   antigravity: { label: 'Gemini', cls: 'border-cyan-500/30 bg-cyan-500/[0.06] text-cyan-600 dark:text-cyan-400' },
+  'antigravity-backup': { label: 'AG 备份', cls: 'border-teal-500/30 bg-teal-500/[0.06] text-teal-600 dark:text-teal-400' },
   'antigravity-ide': { label: 'AG IDE', cls: 'border-sky-500/30 bg-sky-500/[0.06] text-sky-600 dark:text-sky-400' },
+  gemini: { label: 'Gemini CLI', cls: 'border-indigo-500/30 bg-indigo-500/[0.06] text-indigo-600 dark:text-indigo-400' },
 }
 
 const PREFIXES = Object.keys(SOURCE_META)

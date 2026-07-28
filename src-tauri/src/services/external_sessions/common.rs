@@ -1,5 +1,26 @@
 fn iso_secs(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp())
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp())
+}
+
+fn epoch_secs(mut value: i64) -> i64 {
+    while value.abs() >= 100_000_000_000 {
+        value /= 1_000;
+    }
+    value
+}
+
+fn virtual_session_id(kind: &str, id: &str) -> String {
+    format!("@{kind}/{id}")
+}
+
+fn virtual_session_key<'a>(session_id: &'a str, kind: &str) -> Option<&'a str> {
+    session_id.strip_prefix(&format!("@{kind}/"))
+}
+
+fn is_virtual_session(session_id: &str) -> bool {
+    session_id.starts_with('@')
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -39,11 +60,17 @@ fn title_from_user_text(text: &str) -> String {
 /// 一行是否“有意义”（可作标题）
 fn is_meaningful(line: &str) -> bool {
     let t = line.trim();
-    if t.is_empty() || t.starts_with('#') || t.starts_with('<') || t.starts_with("```") || t.starts_with("//") {
+    if t.is_empty()
+        || t.starts_with('#')
+        || t.starts_with('<')
+        || t.starts_with("```")
+        || t.starts_with("//")
+    {
         return false;
     }
     let lower = t.to_lowercase();
-    if lower.starts_with("context") || lower.contains("context from") || lower.starts_with("system") {
+    if lower.starts_with("context") || lower.contains("context from") || lower.starts_with("system")
+    {
         return false;
     }
     // 纯文件路径行（盘符或以 / 开头且不含空格）
@@ -58,26 +85,32 @@ fn meaningful_line(text: &str) -> Option<String> {
     // 优先：My request 标记之后的首个有意义行
     for (i, l) in lines.iter().enumerate() {
         let lt = l.trim();
-        if lt.starts_with("## My request") || lt.starts_with("# My request") || lt.contains("My request for") {
+        if lt.starts_with("## My request")
+            || lt.starts_with("# My request")
+            || lt.contains("My request for")
+        {
             if let Some(n) = lines.iter().skip(i + 1).find(|n| is_meaningful(n)) {
                 return Some(n.trim().to_string());
             }
         }
     }
-    lines.iter().find(|l| is_meaningful(l)).map(|l| l.trim().to_string())
+    lines
+        .iter()
+        .find(|l| is_meaningful(l))
+        .map(|l| l.trim().to_string())
 }
 
-fn read_capped(path: &Path) -> Option<String> {
+fn read_text_file(path: &Path) -> Option<String> {
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size == 0 || size > MAX_FILE_SIZE {
+    if size == 0 {
         return None;
     }
     fs::read_to_string(path).ok()
 }
 
-fn read_bytes_capped(path: &Path) -> Option<Vec<u8>> {
+fn read_binary_file(path: &Path) -> Option<Vec<u8>> {
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size == 0 || size > MAX_FILE_SIZE {
+    if size == 0 {
         return None;
     }
     fs::read(path).ok()
@@ -85,8 +118,14 @@ fn read_bytes_capped(path: &Path) -> Option<Vec<u8>> {
 
 fn metadata_secs(path: &Path, created: bool) -> Option<i64> {
     let meta = fs::metadata(path).ok()?;
-    let time = if created { meta.created().ok()? } else { meta.modified().ok()? };
-    time.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
+    let time = if created {
+        meta.created().ok()?
+    } else {
+        meta.modified().ok()?
+    };
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
 }
 
 /// 递归收集指定扩展名文件（限定深度）
@@ -94,7 +133,9 @@ fn collect_files(dir: &Path, ext: &str, depth: usize, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -126,7 +167,9 @@ fn clean_file_uri(value: &str) -> String {
         .strip_prefix("file:///")
         .or_else(|| value.strip_prefix("file://"))
         .unwrap_or(value);
-    let decoded = urlencoding::decode(raw).map(|v| v.into_owned()).unwrap_or_else(|_| raw.to_string());
+    let decoded = urlencoding::decode(raw)
+        .map(|v| v.into_owned())
+        .unwrap_or_else(|_| raw.to_string());
     let mut s = decoded.replace('/', "\\");
     if s.starts_with("c:\\") {
         s.replace_range(0..1, "C");
@@ -139,7 +182,13 @@ fn clean_file_uri_at(value: &str) -> Option<String> {
     let tail = &value[pos..];
     let end = tail
         .char_indices()
-        .find_map(|(i, c)| matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '}' | ' ' | '\n' | '\r' | '\t').then_some(i))
+        .find_map(|(i, c)| {
+            matches!(
+                c,
+                '"' | '\'' | '<' | '>' | ')' | ']' | '}' | ' ' | '\n' | '\r' | '\t'
+            )
+            .then_some(i)
+        })
         .unwrap_or(tail.len());
     Some(normalize_workspace_path(clean_file_uri(&tail[..end])))
 }
@@ -158,7 +207,11 @@ fn normalize_workspace_path(value: String) -> String {
             path.replace_range(0..first.len_utf8(), &first.to_ascii_uppercase().to_string());
         }
     }
-    let leaf = path.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
+    let leaf = path
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if leaf.contains('.') {
         if let Some((parent, _)) = path.rsplit_once(['\\', '/']) {
             return parent.to_string();
@@ -273,7 +326,9 @@ fn looks_binary_token(value: &str) -> bool {
     }
     let has_space = chars.iter().any(|c| c.is_whitespace());
     let has_cjk = chars.iter().any(|c| is_cjk_text_char(*c));
-    let has_separator = chars.iter().any(|c| matches!(c, '/' | '\\' | ':' | '.' | '-' | '_' | '#'));
+    let has_separator = chars
+        .iter()
+        .any(|c| matches!(c, '/' | '\\' | ':' | '.' | '-' | '_' | '#'));
     if !has_space && !has_cjk && !has_separator && chars.len() < 24 {
         return true;
     }
@@ -288,7 +343,12 @@ fn looks_binary_token(value: &str) -> bool {
 fn is_readable_proto_text(value: &str) -> bool {
     let s = value.trim();
     let len = s.chars().count();
-    if len < 12 || extract_uuid(s).is_some() || s == "master" || s.starts_with("https://") || s.starts_with("http://") {
+    if len < 12
+        || extract_uuid(s).is_some()
+        || s == "master"
+        || s.starts_with("https://")
+        || s.starts_with("http://")
+    {
         return false;
     }
     if s.starts_with("file://") || looks_base64_blob(s) || looks_binary_token(s) {
@@ -309,12 +369,70 @@ fn is_readable_proto_text(value: &str) -> bool {
         || s.contains(".json")
         || s.contains('/')
         || s.contains('\\');
-    let has_sentence_punctuation = s.chars().any(|c| matches!(c, '.' | ',' | '?' | '!' | ':' | ';' | '，' | '。' | '？' | '！' | '：' | '；'));
-    let has_code_punctuation = s.chars().any(|c| matches!(c, '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | '=' | '#'));
+    let has_sentence_punctuation = s.chars().any(|c| {
+        matches!(
+            c,
+            '.' | ',' | '?' | '!' | ':' | ';' | '，' | '。' | '？' | '！' | '：' | '；'
+        )
+    });
+    let has_code_punctuation = s
+        .chars()
+        .any(|c| matches!(c, '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | '=' | '#'));
 
     cjk_count >= 2
         || whitespace_count >= 2
         || has_path_or_file
         || has_sentence_punctuation
         || (has_code_punctuation && len >= 24)
+}
+
+#[cfg(test)]
+mod external_session_size_tests {
+    use super::*;
+
+    #[test]
+    fn scans_and_reads_sessions_larger_than_the_previous_limit() {
+        const PREVIOUS_LIMIT_BYTES: usize = 50 * 1024 * 1024;
+
+        let dir = std::env::temp_dir().join(format!(
+            "kirohub-unlimited-session-size-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("large-session.jsonl");
+        let id = "11111111-1111-4111-8111-111111111111";
+        let header = format!(
+            "{{\"type\":\"session_meta\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\"}}}}\n\
+             {{\"type\":\"user\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\",\"sessionId\":\"{id}\",\"message\":{{\"content\":\"Claude 大会话\"}}}}\n\
+             {{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"Codex 大会话\"}}}}\n"
+        );
+        let padding = format!(
+            "{{\"type\":\"padding\",\"value\":\"{}\"}}\n",
+            "x".repeat(64 * 1024)
+        );
+        let mut file = fs::File::create(&path).unwrap();
+        file.write_all(header.as_bytes()).unwrap();
+        let mut written = header.len();
+        while written <= PREVIOUS_LIMIT_BYTES {
+            file.write_all(padding.as_bytes()).unwrap();
+            written += padding.len();
+        }
+        drop(file);
+
+        let file_size = fs::metadata(&path).unwrap().len() as usize;
+        assert!(file_size > PREVIOUS_LIMIT_BYTES);
+
+        let codex = scan_codex_summary(&path).expect("Codex 大会话应被扫描");
+        assert_eq!(codex.cwd, r"C:\Workspace\Unlimited");
+        assert_eq!(codex.title, "Codex 大会话");
+
+        let claude = scan_claude_summary(&path).expect("Claude 大会话应被扫描");
+        assert_eq!(claude.cwd, r"C:\Workspace\Unlimited");
+        assert_eq!(claude.title, "Claude 大会话");
+
+        assert_eq!(read_text_file(&path).unwrap().len(), file_size);
+        assert_eq!(read_binary_file(&path).unwrap().len(), file_size);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

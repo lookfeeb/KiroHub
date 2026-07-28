@@ -18,15 +18,46 @@ fn locate(hash: &str, session_id: &str) -> Option<(&'static SourceDef, PathBuf)>
 }
 
 pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> {
+    let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
+    let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+    if is_virtual_session(session_id) {
+        return match d.source {
+            "codex" => load_codex_index_session(d, &root, session_id, hash),
+            "claude" => load_claude_history_session(d, &root, session_id, hash),
+            "antigravity" => load_antigravity_summary_session(d, &root, session_id, hash),
+            "antigravity-ide" => load_antigravity_ide_index_session(d, session_id, hash),
+            _ => Err(anyhow::anyhow!("不支持的索引会话来源")),
+        };
+    }
     let (d, path) = locate(hash, session_id).ok_or_else(|| anyhow::anyhow!("非法的会话路径"))?;
     if matches!(d.layout, Layout::AntigravityIde) {
-        let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位 Antigravity IDE 目录"))?;
         return load_antigravity_ide_session(d, &root, &path, session_id, hash);
     }
 
     if matches!(d.layout, Layout::Antigravity) {
-        let bytes = read_bytes_capped(&path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
+        let bytes = read_binary_file(&path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
         let mut parsed = antigravity_strings_to_parsed(&bytes);
+        let index_root = if d.source == "antigravity-backup" {
+            antigravity_root()
+                .filter(|path| path.is_dir())
+                .unwrap_or_else(|| root.clone())
+        } else {
+            root.clone()
+        };
+        if let Some(id) = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(extract_uuid)
+        {
+            if let Some((title, cwd)) = antigravity_summary_index(&index_root).get(&id).cloned() {
+                if !title.trim().is_empty() {
+                    parsed.title = title;
+                }
+                if parsed.cwd.is_empty() && !cwd.trim().is_empty() {
+                    parsed.cwd = cwd;
+                }
+            }
+        }
         if parsed.cwd.is_empty() {
             parsed.cwd = hash.strip_prefix(d.prefix).unwrap_or_default().to_string();
         }
@@ -51,14 +82,43 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
         });
     }
 
-    let content_path = match d.layout {
-        Layout::File { .. } => path,
+    let parsed = match d.layout {
+        Layout::File { .. } if d.source == "codex" => {
+            let mut parsed = parse_codex_file(&path)?;
+            if let Some(id) = codex_id_from_path(&path)? {
+                if let Some(meta) = codex_metadata_result(&root)?.remove(&id) {
+                    let meta_title = codex_meta_title(&meta);
+                    if parsed.cwd.is_empty() {
+                        parsed.cwd = meta.cwd;
+                    }
+                    if !meta.title.trim().is_empty() {
+                        parsed.title = meta_title;
+                    }
+                }
+            }
+            parsed
+        }
+        Layout::File { .. } if d.source == "claude" => parse_claude_file(&path)?,
+        Layout::File { .. } => {
+            let content =
+                read_text_file(&path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
+            (d.parse)(&content)
+        }
+        Layout::Gemini => {
+            let mut parsed = parse_gemini_file(&path)?;
+            if parsed.cwd.is_empty() {
+                parsed.cwd = hash.strip_prefix(d.prefix).unwrap_or_default().to_string();
+            }
+            parsed
+        }
         Layout::Antigravity | Layout::AntigravityIde => {
             return Err(anyhow::anyhow!("不支持的会话布局: {:?}", d.layout));
         }
     };
-    let content = read_capped(&content_path).ok_or_else(|| anyhow::anyhow!("无法读取会话文件"))?;
-    let parsed = (d.parse)(&content);
+    Ok(parsed_to_session(d, session_id, parsed))
+}
+
+fn parsed_to_session(d: &SourceDef, session_id: &str, parsed: Parsed) -> IdeSession {
     let mut history = Vec::new();
     if !parsed.cwd.is_empty() {
         history.push(history_item(
@@ -70,14 +130,14 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
     for (i, (role, text)) in parsed.blocks.iter().enumerate() {
         history.push(history_item(role, text.clone(), i + 1));
     }
-    Ok(IdeSession {
+    IdeSession {
         session_id: session_id.to_string(),
         title: parsed.title,
         session_type: d.source.to_string(),
         workspace_directory: parsed.cwd,
         history,
         conversation_summary: None,
-    })
+    }
 }
 
 fn history_item(role: &str, text: String, idx: usize) -> HistoryItem {
@@ -98,11 +158,17 @@ fn history_item(role: &str, text: String, idx: usize) -> HistoryItem {
 }
 
 pub fn file_path(hash: &str, session_id: &str) -> anyhow::Result<String> {
+    if is_virtual_session(session_id) {
+        return Err(anyhow::anyhow!(
+            "该会话仅来自历史索引，没有可打开的正文文件"
+        ));
+    }
     let (d, path) = locate(hash, session_id).ok_or_else(|| anyhow::anyhow!("非法的会话路径"))?;
     let p = match d.layout {
         Layout::File { .. } => path,
         Layout::Antigravity => path,
         Layout::AntigravityIde => path,
+        Layout::Gemini => path,
     };
     // 去掉 Windows canonicalize 产生的 \\?\ 扩展长度前缀
     let s = p.to_string_lossy().to_string();
@@ -110,8 +176,30 @@ pub fn file_path(hash: &str, session_id: &str) -> anyhow::Result<String> {
 }
 
 pub fn delete_session(hash: &str, session_id: &str) -> anyhow::Result<()> {
+    let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
+    if is_virtual_session(session_id) {
+        if d.source == "claude" {
+            let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+            let result = delete_claude_session(&root, None, session_id);
+            invalidate_cache();
+            return result;
+        }
+        return Err(anyhow::anyhow!(
+            "该会话仅存在于产品历史索引中，KiroHub 以只读方式展示，未执行删除"
+        ));
+    }
+    if d.source == "antigravity-backup" {
+        return Err(anyhow::anyhow!(
+            "Antigravity 备份会话为只读数据，未执行删除"
+        ));
+    }
     let (d, path) = locate(hash, session_id).ok_or_else(|| anyhow::anyhow!("非法的会话路径"))?;
     let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+    if d.source == "claude" {
+        let result = delete_claude_session(&root, Some(&path), session_id);
+        invalidate_cache();
+        return result;
+    }
     if d.source == "codex" {
         let result = delete_codex_session(&root, &path);
         invalidate_cache();
@@ -123,7 +211,7 @@ pub fn delete_session(hash: &str, session_id: &str) -> anyhow::Result<()> {
         return result;
     }
     match d.layout {
-        Layout::File { .. } => fs::remove_file(&path)?,
+        Layout::File { .. } | Layout::Gemini => fs::remove_file(&path)?,
         Layout::Antigravity | Layout::AntigravityIde => unreachable!(),
     }
     invalidate_cache();
@@ -133,6 +221,19 @@ pub fn delete_session(hash: &str, session_id: &str) -> anyhow::Result<()> {
 /// 删除整个 workspace（该 cwd 下全部会话）
 pub fn delete_workspace(hash: &str) -> anyhow::Result<()> {
     let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
+    if d.source == "antigravity-backup" {
+        return Err(anyhow::anyhow!(
+            "Antigravity 备份工作区为只读数据，未执行删除"
+        ));
+    }
+    if list_sessions(hash)
+        .iter()
+        .any(|session| is_virtual_session(&session.session_id) && d.source != "claude")
+    {
+        return Err(anyhow::anyhow!(
+            "该工作区包含仅索引恢复的只读会话，未执行可能不完整的批量删除"
+        ));
+    }
     let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
     let workspace = hash.strip_prefix(d.prefix).unwrap_or_default();
     if d.source == "codex" {

@@ -85,6 +85,10 @@ type PreviewRow =
   | { kind: 'summary'; key: string; text: string }
   | { kind: 'message'; key: string; item: HistoryItem; historyIndex: number }
 
+function isReadOnlySessionSummary(session: SessionSummary): boolean {
+  return session.sessionId.startsWith('@') || session.source === 'antigravity-backup'
+}
+
 function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width))
 }
@@ -132,6 +136,7 @@ function SessionListRow({
   workspaceName,
   showSource = true,
   disabled,
+  deletable = true,
   onSelect,
   onDelete,
 }: {
@@ -141,6 +146,7 @@ function SessionListRow({
   workspaceName?: string
   showSource?: boolean
   disabled?: boolean
+  deletable?: boolean
   onSelect: () => void
   onDelete: () => void
 }) {
@@ -181,12 +187,14 @@ function SessionListRow({
         ) : showSource ? (
           <SourceBadge source={session.source} compact />
         ) : null}
-        <DeleteMenu
-          label="删除会话"
-          onDelete={onDelete}
-          disabled={disabled}
-          triggerClassName="opacity-0 transition-opacity group-hover/session:opacity-100 group-focus-within/session:opacity-100"
-        />
+        {deletable && (
+          <DeleteMenu
+            label="删除会话"
+            onDelete={onDelete}
+            disabled={disabled}
+            triggerClassName="opacity-0 transition-opacity group-hover/session:opacity-100 group-focus-within/session:opacity-100"
+          />
+        )}
       </div>
     </div>
   )
@@ -343,6 +351,9 @@ export default function SessionManagerView() {
     ),
     [platformGroups, selectedWorkspaceHashes],
   )
+  const deletableWorkspaceHashes = useMemo(() => new Set(
+    workspaces.filter(hash => (workspaceSessions.get(hash) || []).every(session => !isReadOnlySessionSummary(session))),
+  ), [workspaces, workspaceSessions])
 
   const filteredSessions = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase('zh-CN')
@@ -433,10 +444,11 @@ export default function SessionManagerView() {
   }
 
   const toggleSelectHashes = (hashes: string[]) => {
+    const selectable = hashes.filter(hash => deletableWorkspaceHashes.has(hash))
     setSelectedWorkspaceHashes(previous => {
       const next = new Set(previous)
-      const allSelected = hashes.length > 0 && hashes.every(hash => next.has(hash))
-      for (const hash of hashes) {
+      const allSelected = selectable.length > 0 && selectable.every(hash => next.has(hash))
+      for (const hash of selectable) {
         if (allSelected) next.delete(hash)
         else next.add(hash)
       }
@@ -772,6 +784,7 @@ export default function SessionManagerView() {
                           pending={sessionLoadingKey === rowKey}
                           workspaceName={decodeWorkspaceName(session.workspaceHash)}
                           disabled={mutating}
+                          deletable={!isReadOnlySessionSummary(session)}
                           onSelect={() => handleSelectSession(session.workspaceHash, session)}
                           onDelete={() => handleDeleteSession(session)}
                         />
@@ -786,8 +799,9 @@ export default function SessionManagerView() {
                   </div>
                 ) : platformGroups.map(({ platform, workspaces: platformWorkspaces, directories }) => {
                   const open = !collapsedGroups.has(platform.key)
-                  const selectedCount = platformWorkspaces.filter(hash => selectedWorkspaceHashes.has(hash)).length
-                  const allChecked = platformWorkspaces.length > 0 && selectedCount === platformWorkspaces.length
+                  const selectableWorkspaces = platformWorkspaces.filter(hash => deletableWorkspaceHashes.has(hash))
+                  const selectedCount = selectableWorkspaces.filter(hash => selectedWorkspaceHashes.has(hash)).length
+                  const allChecked = selectableWorkspaces.length > 0 && selectedCount === selectableWorkspaces.length
                   const groupChecked = allChecked ? true : selectedCount > 0 ? 'indeterminate' : false
                   return (
                     <section key={platform.key}>
@@ -795,8 +809,8 @@ export default function SessionManagerView() {
                         {manageMode && (
                           <Checkbox
                             checked={groupChecked}
-                            onCheckedChange={() => toggleSelectHashes(platformWorkspaces)}
-                            disabled={mutating}
+                            onCheckedChange={() => toggleSelectHashes(selectableWorkspaces)}
+                            disabled={mutating || selectableWorkspaces.length === 0}
                             aria-label={`选择全部 ${platform.label} 工作区`}
                           />
                         )}
@@ -823,6 +837,7 @@ export default function SessionManagerView() {
                             const checked = selectedHashes === directory.hashes.length
                             const checkboxState = checked ? true : selectedHashes > 0 ? 'indeterminate' : false
                             const directorySources = Array.from(new Set(directory.hashes.map(sourceOf))).sort()
+                            const directoryReadOnly = directory.sessions.some(isReadOnlySessionSummary)
                             return (
                               <div key={directory.key}>
                                 <div
@@ -836,7 +851,7 @@ export default function SessionManagerView() {
                                       <Checkbox
                                         checked={checkboxState}
                                         onCheckedChange={() => toggleSelectHashes(directory.hashes)}
-                                        disabled={mutating}
+                                        disabled={mutating || directoryReadOnly}
                                         aria-label={`选择工作目录 ${directory.name}`}
                                       />
                                     </div>
@@ -864,12 +879,14 @@ export default function SessionManagerView() {
                                       {directorySources.map(source => <SourceBadge key={source} source={source} compact />)}
                                     </div>
                                   )}
-                                  <DeleteMenu
-                                    label="删除工作目录"
-                                    onDelete={() => handleDeleteDirectory(directory, platform.label)}
-                                    disabled={mutating}
-                                    triggerClassName="mr-1.5 opacity-0 transition-opacity group-hover/directory:opacity-100 group-focus-within/directory:opacity-100"
-                                  />
+                                  {!directoryReadOnly && (
+                                    <DeleteMenu
+                                      label="删除工作目录"
+                                      onDelete={() => handleDeleteDirectory(directory, platform.label)}
+                                      disabled={mutating}
+                                      triggerClassName="mr-1.5 opacity-0 transition-opacity group-hover/directory:opacity-100 group-focus-within/directory:opacity-100"
+                                    />
+                                  )}
                                 </div>
 
                                 {expanded && (
@@ -886,6 +903,7 @@ export default function SessionManagerView() {
                                           pending={sessionLoadingKey === rowKey}
                                           showSource={directorySources.length > 1}
                                           disabled={mutating}
+                                          deletable={!isReadOnlySessionSummary(session)}
                                           onSelect={() => handleSelectSession(session.workspaceHash, session)}
                                           onDelete={() => handleDeleteSession(session)}
                                         />
@@ -982,7 +1000,13 @@ export default function SessionManagerView() {
                     </span>
                   )}
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <Button variant="outline" size="sm" onClick={handleCopySessionPath} title="复制会话文件路径">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopySessionPath}
+                      disabled={selectedSummary?.sessionId.startsWith('@')}
+                      title={selectedSummary?.sessionId.startsWith('@') ? '该索引会话没有正文文件' : '复制会话文件路径'}
+                    >
                       <Copy />
                       路径
                     </Button>

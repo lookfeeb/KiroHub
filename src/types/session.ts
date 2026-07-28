@@ -17,7 +17,7 @@ export interface SessionSummary {
   fileSize: number
   createdAt?: number
   modifiedAt?: number
-  source?: 'ide' | 'cli' | 'codex' | 'claude' | 'antigravity' | 'antigravity-ide'
+  source?: 'ide' | 'cli' | 'codex' | 'claude' | 'antigravity' | 'antigravity-backup' | 'antigravity-ide' | 'gemini'
 }
 
 export interface SessionTree {
